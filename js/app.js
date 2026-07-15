@@ -78,6 +78,46 @@ function fmtDate(iso) {
   const [y, m, d] = iso.split("-");
   return `${d}.${m}.${y}`;
 }
+function fmtDateTime(ts) {
+  if (!ts?.seconds) return "";
+  return new Date(ts.seconds * 1000).toLocaleString("de-DE", {
+    day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit"
+  }) + " Uhr";
+}
+
+// Kategorien für Diagramme & Statistiken (aus dem Titel erkannt)
+const CATEGORIES = [
+  { key: "kaffee", label: "Kaffee", emoji: "☕️", re: /(kaffee|espresso|bohne|coffee)/ },
+  { key: "milch", label: "Milch", emoji: "🥛", re: /(milch|hafer|oat)/ },
+  { key: "zucker", label: "Zucker", emoji: "🍬", re: /(zucker|süßstoff|sirup)/ },
+  { key: "tee", label: "Tee", emoji: "🍵", re: /tee/ },
+  { key: "wasser", label: "Wasser", emoji: "💧", re: /(wasser|sprudel)/ },
+  { key: "suesses", label: "Süßes & Gebäck", emoji: "🍰", re: /(kuchen|geb(ä|a)ck|keks|donut|croissant|schoko|süß|eis)/ },
+  { key: "zubehoer", label: "Zubehör", emoji: "🧰", re: /(filter|becher|tasse|maschine|entkalker|reinig|löffel)/ }
+];
+const CAT_OTHER = { key: "sonstiges", label: "Sonstiges", emoji: "🛒" };
+function categoryFor(title) {
+  const t = (title || "").toLowerCase();
+  return CATEGORIES.find(c => c.re.test(t)) || CAT_OTHER;
+}
+
+// Beträge nach der Eingabe immer als "12,00" formatieren
+function wireMoneyInput(el) {
+  if (!el) return;
+  el.addEventListener("blur", () => {
+    const cents = parseEuro(el.value);
+    if (cents !== null) el.value = (cents / 100).toFixed(2).replace(".", ",");
+  });
+}
+
+// Datumsfelder: Kalender direkt beim Antippen öffnen (PC & Handy)
+document.addEventListener("click", (e) => {
+  const inp = e.target.closest('input[type="date"]');
+  if (inp && !inp.disabled && typeof inp.showPicker === "function") {
+    try { inp.showPicker(); } catch { /* braucht Nutzer-Geste, ignorieren */ }
+  }
+});
+
 function emojiFor(title) {
   const t = (title || "").toLowerCase();
   if (/(kaffee|espresso|bohne|coffee)/.test(t)) return "☕️";
@@ -250,6 +290,10 @@ function renderMasterUI() {
   const master = state.user && isMasterUser();
   $("master-card").classList.toggle("hidden", !master);
   $("noteam-master").classList.toggle("hidden", !master);
+  $("create-team-section").classList.toggle("hidden", !master);
+  $("noteam-sub").textContent = master
+    ? "Erstelle ein Team oder tritt einem bei."
+    : "Tritt mit einem Einladungscode einem Team bei.";
   if (!master) return;
   const n = pendingUsers().length;
   $("master-card-sub").textContent = n
@@ -259,50 +303,100 @@ function renderMasterUI() {
   $("master-card-badge").textContent = n;
   $("noteam-master").textContent = n
     ? `🔑 Benutzerverwaltung (${n} offen)` : "🔑 Benutzerverwaltung";
+  // Offene Liste live aktualisieren
+  if ($("ua-list")) renderUserAdminList();
 }
 
 $("master-card").addEventListener("click", openUserAdminModal);
 $("noteam-master").addEventListener("click", openUserAdminModal);
 
+function userStatus(u) {
+  if (u.approved === true) return "aktiv";
+  return u.blockedAt ? "gesperrt" : "wartet";
+}
+const UA_STATUS = {
+  wartet: { icon: "⏳", label: "Wartet auf Freischaltung", order: 0 },
+  gesperrt: { icon: "⛔️", label: "Gesperrt", order: 1 },
+  aktiv: { icon: "✅", label: "Freigeschaltet", order: 2 }
+};
+const uaState = { search: "", filter: "alle" };
+
 function openUserAdminModal() {
-  const users = state.allUsers
-    .filter(u => (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase())
-    .sort((a, b) => (a.approved === true ? 1 : 0) - (b.approved === true ? 1 : 0)
-      || (a.name || "").localeCompare(b.name || ""));
+  uaState.search = "";
+  uaState.filter = "alle";
   openModal(`
     <h3 class="modal-title">Benutzerverwaltung</h3>
-    <p class="muted small" style="margin-bottom:12px">Neue Konten können die App erst
-      benutzen, nachdem du sie hier freigeschaltet hast.</p>
-    <div class="stack-list">
-      ${users.length ? users.map(u => `
-        <div class="list-item">
-          <div class="item-icon">${u.approved === true ? "✅" : "⏳"}</div>
-          <div class="item-main">
-            <div class="item-title">${esc(u.name || "Ohne Name")}</div>
-            <div class="item-sub">${esc(u.email || "")} · ${u.approved === true ? "freigeschaltet" : "wartet auf Freischaltung"}</div>
-          </div>
-          ${u.approved === true
-            ? `<button class="btn btn-small btn-danger" data-block="${esc(u.uid)}">Sperren</button>`
-            : `<button class="btn btn-small btn-primary" data-approve="${esc(u.uid)}">Freischalten</button>`}
-        </div>`).join("")
-      : `<div class="empty-note">Bisher hat sich niemand sonst registriert.</div>`}
+    <input type="search" class="search-input" id="ua-search" placeholder="Nach Name oder E-Mail suchen …">
+    <div class="filter-row" id="ua-filters">
+      ${["alle", "wartet", "aktiv", "gesperrt"].map(f =>
+        `<button class="filter-chip ${f === "alle" ? "active" : ""}" data-f="${f}">${f[0].toUpperCase() + f.slice(1)}</button>`).join("")}
     </div>
+    <div class="stack-list" id="ua-list"></div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="ua-close">Schließen</button>
     </div>`);
   $("ua-close").addEventListener("click", closeModal);
-  $("modal-box").querySelectorAll("[data-approve]").forEach(b =>
-    b.addEventListener("click", async () => {
-      await updateDoc(doc(db, "users", b.dataset.approve), { approved: true });
-      toast("Konto freigeschaltet ✅");
-      openUserAdminModal();
+  $("ua-search").addEventListener("input", () => {
+    uaState.search = $("ua-search").value.trim().toLowerCase();
+    renderUserAdminList();
+  });
+  $("ua-filters").querySelectorAll("[data-f]").forEach(chip =>
+    chip.addEventListener("click", () => {
+      uaState.filter = chip.dataset.f;
+      $("ua-filters").querySelectorAll(".filter-chip").forEach(c =>
+        c.classList.toggle("active", c === chip));
+      renderUserAdminList();
     }));
-  $("modal-box").querySelectorAll("[data-block]").forEach(b =>
+  renderUserAdminList();
+}
+
+function renderUserAdminList() {
+  const box = $("ua-list");
+  if (!box) return;
+  const users = state.allUsers
+    .filter(u => (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase())
+    .filter(u => !uaState.search
+      || (u.name || "").toLowerCase().includes(uaState.search)
+      || (u.email || "").toLowerCase().includes(uaState.search))
+    .filter(u => uaState.filter === "alle" || userStatus(u) === uaState.filter)
+    .sort((a, b) => UA_STATUS[userStatus(a)].order - UA_STATUS[userStatus(b)].order
+      || (a.name || "").localeCompare(b.name || ""));
+
+  box.innerHTML = users.length ? users.map(u => {
+    const st = UA_STATUS[userStatus(u)];
+    const lines = [
+      esc(u.email || ""),
+      `Registriert: ${fmtDateTime(u.createdAt) || "–"}`,
+      u.approvedAt ? `Freigeschaltet: ${fmtDateTime(u.approvedAt)}` : "",
+      u.blockedAt && u.approved !== true ? `Gesperrt: ${fmtDateTime(u.blockedAt)}` : ""
+    ].filter(Boolean).join("<br>");
+    return `
+      <div class="list-item compact">
+        <div class="item-icon">${st.icon}</div>
+        <div class="item-main">
+          <div class="item-title">${esc(u.name || "Ohne Name")}</div>
+          <div class="item-sub">${lines}</div>
+        </div>
+        ${u.approved === true
+          ? `<button class="btn btn-small btn-danger" data-block="${esc(u.uid)}">Sperren</button>`
+          : `<button class="btn btn-small btn-primary" data-approve="${esc(u.uid)}">Freischalten</button>`}
+      </div>`;
+  }).join("") : `<div class="empty-note">Keine Konten gefunden.</div>`;
+
+  box.querySelectorAll("[data-approve]").forEach(b =>
+    b.addEventListener("click", async () => {
+      await updateDoc(doc(db, "users", b.dataset.approve), {
+        approved: true, approvedAt: serverTimestamp()
+      });
+      toast("Konto freigeschaltet ✅");
+    }));
+  box.querySelectorAll("[data-block]").forEach(b =>
     b.addEventListener("click", async () => {
       if (!confirm("Dieses Konto sperren? Die Person kann die App dann nicht mehr benutzen, bis du sie wieder freischaltest.")) return;
-      await updateDoc(doc(db, "users", b.dataset.block), { approved: false });
+      await updateDoc(doc(db, "users", b.dataset.block), {
+        approved: false, blockedAt: serverTimestamp()
+      });
       toast("Konto gesperrt.");
-      openUserAdminModal();
     }));
 }
 
@@ -423,6 +517,11 @@ $("btn-create-team").addEventListener("click", async () => {
   const name = $("new-team-name").value.trim();
   const errEl = $("noteam-error");
   errEl.classList.add("hidden");
+  if (!isMasterUser()) {
+    errEl.textContent = "Nur der Verwalter kann neue Teams erstellen.";
+    errEl.classList.remove("hidden");
+    return;
+  }
   if (!name) { errEl.textContent = "Bitte einen Teamnamen eingeben."; errEl.classList.remove("hidden"); return; }
   try {
     await createTeam(name);
@@ -636,7 +735,185 @@ function renderDashboard() {
     : `<div class="empty-note">Noch keine Ausgaben. Tippe auf +, um die erste einzutragen.</div>`;
   $("recent-expenses").querySelectorAll("[data-eid]").forEach(el2 =>
     el2.addEventListener("click", () => openExpenseModal(el2.dataset.eid)));
+
+  renderExpenseChart();
+  renderBalanceChart();
+  renderStats();
 }
+
+// ---------- Diagramme ----------
+const chartCfg = Object.assign(
+  { dim: "person", period: "90" },
+  JSON.parse(localStorage.getItem("kk-chart") || "{}"));
+
+function periodStartDate(period) {
+  if (period === "all") return "0000-00-00";
+  const d = new Date();
+  d.setDate(d.getDate() - parseInt(period, 10));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+$("chart-dim").value = chartCfg.dim;
+$("chart-period").value = chartCfg.period;
+for (const id of ["chart-dim", "chart-period"]) {
+  $(id).addEventListener("change", () => {
+    chartCfg.dim = $("chart-dim").value;
+    chartCfg.period = $("chart-period").value;
+    localStorage.setItem("kk-chart", JSON.stringify(chartCfg));
+    renderExpenseChart();
+  });
+}
+
+function renderExpenseChart() {
+  const from = periodStartDate(chartCfg.period);
+  const exps = state.expenses.filter(e => e.type !== "adjustment" && e.date >= from);
+  const groups = new Map();
+  for (const e of exps) {
+    let key, label;
+    if (chartCfg.dim === "person") {
+      key = e.paidBy; label = memberNameReal(e.paidBy);
+    } else if (chartCfg.dim === "cat") {
+      const c = categoryFor(e.title); key = c.key; label = `${c.emoji} ${c.label}`;
+    } else {
+      key = e.date.slice(0, 7); label = `${e.date.slice(5, 7)}/${e.date.slice(0, 4)}`;
+    }
+    const g = groups.get(key) || { label, sum: 0 };
+    g.sum += e.amount;
+    groups.set(key, g);
+  }
+  let rows = [...groups.entries()];
+  rows = chartCfg.dim === "month"
+    ? rows.sort((a, b) => a[0].localeCompare(b[0]))
+    : rows.sort((a, b) => b[1].sum - a[1].sum);
+  if (!rows.length) {
+    $("chart-expenses").innerHTML = `<div class="empty-note">Keine Ausgaben im gewählten Zeitraum.</div>`;
+    return;
+  }
+  const max = Math.max(...rows.map(([, g]) => g.sum));
+  $("chart-expenses").innerHTML = rows.map(([, g]) => `
+    <div class="bar-row" title="${esc(g.label)}: ${formatCents(g.sum)}">
+      <div class="bar-label">${esc(g.label)}</div>
+      <div class="bar-track">
+        <div class="bar-fill" style="width:${Math.max(2, Math.round(g.sum / max * 100))}%"></div>
+        <span class="bar-val">${formatCents(g.sum)}</span>
+      </div>
+    </div>`).join("");
+}
+
+function renderBalanceChart() {
+  const rows = Object.entries(state.balances)
+    .filter(([uid, b]) => state.members[uid]?.active !== false || b !== 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (!rows.length) {
+    $("chart-balances").innerHTML = `<div class="empty-note">Noch keine Daten.</div>`;
+    return;
+  }
+  const max = Math.max(1, ...rows.map(([, b]) => Math.abs(b)));
+  $("chart-balances").innerHTML = rows.map(([uid, b]) => {
+    const w = Math.max(2, Math.round(Math.abs(b) / max * 100));
+    const val = (b > 0 ? "+" : b < 0 ? "−" : "") + formatCents(Math.abs(b));
+    return `
+      <div class="dbar-row" title="${esc(memberNameReal(uid))}: ${val}">
+        <div class="dbar-label">${esc(memberNameReal(uid))}</div>
+        <div class="dbar-neg">${b < 0 ? `<span class="bar-val">${val}</span><div class="dbar-fill" style="width:${w}%"></div>` : ""}</div>
+        <div class="dbar-axis"></div>
+        <div class="dbar-pos">${b > 0 ? `<div class="dbar-fill" style="width:${w}%"></div><span class="bar-val">${val}</span>` : b === 0 ? `<span class="bar-val muted">0,00 €</span>` : ""}</div>
+      </div>`;
+  }).join("");
+}
+
+// ---------- Statistiken (für den Besitzer konfigurierbar) ----------
+const STAT_TILES = {
+  total: "Gesamtausgaben",
+  avgMonth: "Ø pro Monat",
+  avgExpense: "Ø pro Ausgabe",
+  count: "Anzahl Ausgaben"
+};
+const DEFAULT_STATS = { period: "all", tiles: ["total", "avgMonth", "avgExpense"], cats: ["kaffee", "milch"] };
+function statsCfg() {
+  return Object.assign({}, DEFAULT_STATS, state.team?.statsConfig || {});
+}
+const PERIOD_LABEL = { 30: "30 Tage", 90: "90 Tage", 365: "1 Jahr", all: "gesamt" };
+
+function renderStats() {
+  $("btn-stats-config").classList.toggle("hidden", !isOwner());
+  const cfg = statsCfg();
+  const from = periodStartDate(cfg.period);
+  const exps = state.expenses.filter(e => e.type !== "adjustment" && e.date >= from);
+  const total = exps.reduce((s, e) => s + e.amount, 0);
+  const months = new Set(exps.map(e => e.date.slice(0, 7))).size || 1;
+  const pl = PERIOD_LABEL[cfg.period] || "gesamt";
+
+  const tiles = [];
+  const tileValue = {
+    total: formatCents(total),
+    avgMonth: formatCents(Math.round(total / months)),
+    avgExpense: formatCents(exps.length ? Math.round(total / exps.length) : 0),
+    count: String(exps.length)
+  };
+  for (const key of cfg.tiles || []) {
+    if (STAT_TILES[key]) tiles.push({ label: `${STAT_TILES[key]} (${pl})`, value: tileValue[key] });
+  }
+  for (const catKey of cfg.cats || []) {
+    const c = CATEGORIES.find(x => x.key === catKey) || CAT_OTHER;
+    const sum = exps.filter(e => categoryFor(e.title).key === c.key).reduce((s, e) => s + e.amount, 0);
+    tiles.push({ label: `${c.emoji} ${c.label} (${pl})`, value: formatCents(sum) });
+  }
+  $("stats-grid").innerHTML = tiles.length
+    ? tiles.map(t => `
+      <div class="stat-tile">
+        <div class="stat-label">${esc(t.label)}</div>
+        <div class="stat-value">${esc(t.value)}</div>
+      </div>`).join("")
+    : `<div class="empty-note" style="grid-column:1/-1">Keine Statistiken ausgewählt.</div>`;
+}
+
+$("btn-stats-config").addEventListener("click", () => {
+  if (!isOwner()) return;
+  const cfg = statsCfg();
+  openModal(`
+    <h3 class="modal-title">Statistiken anpassen</h3>
+    <div class="stack">
+      <div class="field">
+        <label>Zeitraum</label>
+        <select id="sc-period">
+          ${Object.entries(PERIOD_LABEL).map(([k, v]) =>
+            `<option value="${k}" ${cfg.period === k ? "selected" : ""}>${v}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Kennzahlen</label>
+        ${Object.entries(STAT_TILES).map(([k, v]) => `
+          <div class="participant-row">
+            <input type="checkbox" id="sc-t-${k}" ${cfg.tiles?.includes(k) ? "checked" : ""}>
+            <label for="sc-t-${k}">${v}</label>
+          </div>`).join("")}
+      </div>
+      <div class="field">
+        <label>Kategorien (Summe im Zeitraum)</label>
+        ${[...CATEGORIES, CAT_OTHER].map(c => `
+          <div class="participant-row">
+            <input type="checkbox" id="sc-c-${c.key}" ${cfg.cats?.includes(c.key) ? "checked" : ""}>
+            <label for="sc-c-${c.key}">${c.emoji} ${c.label}</label>
+          </div>`).join("")}
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="sc-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="sc-save">Speichern</button>
+    </div>`);
+  $("sc-cancel").addEventListener("click", closeModal);
+  $("sc-save").addEventListener("click", async () => {
+    const newCfg = {
+      period: $("sc-period").value,
+      tiles: Object.keys(STAT_TILES).filter(k => $(`sc-t-${k}`).checked),
+      cats: [...CATEGORIES, CAT_OTHER].map(c => c.key).filter(k => $(`sc-c-${k}`).checked)
+    };
+    await updateDoc(doc(db, "teams", state.teamId), { statsConfig: newCfg });
+    closeModal();
+    toast("Statistiken gespeichert ✅");
+  });
+});
 
 // ---------- Ausgaben ----------
 function renderExpenses() {
@@ -679,17 +956,19 @@ function renderSettle() {
       </div>`;
   }).join("") || `<div class="empty-note">Keine Mitglieder.</div>`;
 
-  const hist = state.settlements.slice(0, 25);
+  const admin = isAdmin();
+  const hist = state.settlements.slice(0, 50);
   $("settle-history").innerHTML = hist.length
     ? hist.map(s => `
-      <div class="list-item">
+      <div class="list-item ${admin ? "tappable" : ""}" data-sid="${esc(s.id)}">
         <div class="item-icon">${s.status === "confirmed" ? "✅" : "⏳"}</div>
         <div class="item-main">
-          <div class="item-title">${esc(memberName(s.from))} → ${esc(memberName(s.to))}</div>
-          <div class="item-sub">
+          <div class="item-title">${esc(memberName(s.from))} → ${esc(memberName(s.to))}
             <span class="badge ${s.status === "confirmed" ? "badge-confirmed" : "badge-pending"}">
               ${s.status === "confirmed" ? "Ausgeglichen" : "Wartet auf Bestätigung"}</span>
           </div>
+          <div class="item-sub">Gemeldet: ${esc(fmtDateTime(s.createdAt) || "–")}</div>
+          ${s.status === "confirmed" ? `<div class="item-sub">Bestätigt: ${esc(fmtDateTime(s.confirmedAt) || "–")}</div>` : ""}
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
           <span class="item-amount">${formatCents(s.amount)}</span>
@@ -699,7 +978,62 @@ function renderSettle() {
       </div>`).join("")
     : `<div class="empty-note">Noch keine Ausgleichszahlungen.</div>`;
   $("settle-history").querySelectorAll("[data-confirm]").forEach(b =>
-    b.addEventListener("click", () => confirmSettlement(b.dataset.confirm)));
+    b.addEventListener("click", (e) => { e.stopPropagation(); confirmSettlement(b.dataset.confirm); }));
+  if (admin) {
+    $("settle-history").querySelectorAll("[data-sid]").forEach(el =>
+      el.addEventListener("click", () => openSettlementAdminModal(el.dataset.sid)));
+  }
+}
+
+// Admin/Benutzer: Ausgleichszahlung bearbeiten, löschen, rückgängig machen
+function openSettlementAdminModal(id) {
+  const s = state.settlements.find(x => x.id === id);
+  if (!s || !isAdmin()) return;
+  openModal(`
+    <h3 class="modal-title">Zahlung bearbeiten</h3>
+    <p class="muted small" style="margin-bottom:12px">
+      ${esc(memberNameReal(s.from))} → ${esc(memberNameReal(s.to))}<br>
+      Gemeldet: ${esc(fmtDateTime(s.createdAt) || "–")}
+      ${s.confirmedAt ? `<br>Bestätigt: ${esc(fmtDateTime(s.confirmedAt))}` : ""}</p>
+    <div class="stack">
+      <div class="field">
+        <label>Betrag (€)</label>
+        <input type="text" id="sa-amount" inputmode="decimal" value="${(s.amount / 100).toFixed(2).replace(".", ",")}">
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="sa-status">
+          <option value="pending" ${s.status === "pending" ? "selected" : ""}>Wartet auf Bestätigung</option>
+          <option value="confirmed" ${s.status === "confirmed" ? "selected" : ""}>Ausgeglichen (bestätigt)</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="sa-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="sa-save">Speichern</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="sa-delete">Zahlung löschen (rückgängig machen)</button>
+    </div>`);
+  wireMoneyInput($("sa-amount"));
+  $("sa-cancel").addEventListener("click", closeModal);
+  $("sa-save").addEventListener("click", async () => {
+    const cents = parseEuro($("sa-amount").value);
+    if (!cents || cents <= 0) { toast("Bitte einen gültigen Betrag eingeben."); return; }
+    const status = $("sa-status").value;
+    const updates = { amount: cents, status };
+    if (status === "confirmed" && !s.confirmedAt) updates.confirmedAt = serverTimestamp();
+    if (status === "pending") updates.confirmedAt = null;
+    await updateDoc(doc(db, "teams", state.teamId, "settlements", id), updates);
+    closeModal();
+    toast("Zahlung aktualisiert ✅");
+  });
+  $("sa-delete").addEventListener("click", async () => {
+    if (!confirm("Diese Zahlung wirklich löschen? Die Beträge gelten dann wieder als offen.")) return;
+    await deleteDoc(doc(db, "teams", state.teamId, "settlements", id));
+    closeModal();
+    toast("Zahlung gelöscht.");
+  });
 }
 
 async function confirmSettlement(id) {
@@ -729,6 +1063,7 @@ function openSettleModal(kind, otherUid, suggested) {
       <button class="btn btn-secondary" id="settle-cancel">Abbrechen</button>
       <button class="btn btn-primary" id="settle-ok">${kind === "pay" ? "Als bezahlt melden" : "Erhalt bestätigen"}</button>
     </div>`);
+  wireMoneyInput($("settle-amount"));
   $("settle-cancel").addEventListener("click", closeModal);
   $("settle-ok").addEventListener("click", async () => {
     const cents = parseEuro($("settle-amount").value);
@@ -991,6 +1326,7 @@ function openExpenseModal(expenseId) {
   `);
 
   const picker = wirePicker("exp-pick");
+  wireMoneyInput($("exp-amount"));
   $("exp-cancel").addEventListener("click", closeModal);
 
   if (!canEdit) {

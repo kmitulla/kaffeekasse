@@ -12,7 +12,7 @@
   --glass-highlight: rgba(255, 255, 255, 0.35);
   --accent: #f4a259;
   --accent-2: #e76f51;
-  --green: #5fd68b;
+  --green: #4fd6c3;
   --red: #ff7a6e;
   --blue: #6fb7ff;
   --radius-lg: 26px;
@@ -109,7 +109,7 @@ body {
 .stack { display: flex; flex-direction: column; gap: 12px; text-align: left; }
 
 .field label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin: 0 0 6px 4px; }
-.field input, .field select, .field textarea {
+.field input:not([type="checkbox"]), .field select, .field textarea {
   width: 100%; padding: 13px 15px;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -119,6 +119,33 @@ body {
   -webkit-appearance: none; appearance: none;
 }
 .field input:focus, .field select:focus { border-color: var(--accent); }
+
+/* Datum: natives Eingabefeld, Kalender-Symbol sichtbar und antippbar */
+input[type="date"] { min-height: 50px; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.85); cursor: pointer; padding: 6px; margin-right: -4px;
+}
+
+/* Eigene, gut sichtbare Checkboxen (iOS-Stil) */
+input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none;
+  width: 26px; height: 26px; flex: none;
+  border-radius: 9px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+input[type="checkbox"]:checked {
+  background-color: var(--accent);
+  background-image:
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4.5 12.5l5 5 10-11" stroke="%232a1608" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+    linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(231, 111, 81, 0.35);
+}
 .field select { background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%), linear-gradient(135deg, var(--text-muted) 50%, transparent 50%); background-position: calc(100% - 20px) 55%, calc(100% - 15px) 55%; background-size: 5px 5px; background-repeat: no-repeat; }
 
 /* ---------- Buttons ---------- */
@@ -314,9 +341,6 @@ body {
 .participant-row { display: flex; align-items: center; gap: 11px; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,0.07); }
 .participant-row:last-child { border-bottom: 0; }
 .participant-row label { flex: 1; font-weight: 600; font-size: 0.95rem; cursor: pointer; }
-.participant-row input[type="checkbox"] {
-  width: 24px; height: 24px; accent-color: var(--accent); cursor: pointer;
-}
 .pct-input {
   width: 74px; padding: 8px; text-align: right;
   border-radius: 10px; border: 1px solid rgba(255,255,255,0.14);
@@ -333,6 +357,79 @@ body {
   padding: 7px 13px; border-radius: 999px; cursor: pointer;
 }
 .chip:active { background: var(--glass-strong); }
+
+/* ---------- Diagramme ---------- */
+.chart-card { padding: 16px; }
+.chart-controls { display: flex; gap: 8px; margin-bottom: 14px; }
+.chart-controls select {
+  flex: 1; padding: 9px 12px; font-size: 0.85rem;
+  border-radius: 11px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.28); color: var(--text); font-family: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.bar-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+.bar-label {
+  width: 88px; flex: none; font-size: 0.78rem; font-weight: 600;
+  color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right;
+}
+.bar-track { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bar-fill {
+  height: 15px; border-radius: 0 4px 4px 0;
+  background: var(--accent); min-width: 2px;
+  transition: width 0.4s ease;
+}
+.bar-val { font-size: 0.76rem; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Diverging-Balken (Salden) */
+.dbar-row { display: flex; align-items: center; padding: 5px 0; gap: 0; }
+.dbar-label { width: 88px; flex: none; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; padding-right: 10px; }
+.dbar-neg, .dbar-pos { flex: 1; display: flex; align-items: center; min-width: 0; }
+.dbar-neg { justify-content: flex-end; }
+.dbar-neg .dbar-fill { background: var(--red); border-radius: 4px 0 0 4px; }
+.dbar-pos .dbar-fill { background: var(--green); border-radius: 0 4px 4px 0; }
+.dbar-fill { height: 15px; min-width: 2px; }
+.dbar-axis { width: 1.5px; align-self: stretch; background: rgba(255,255,255,0.25); flex: none; }
+.dbar-neg .bar-val { margin-right: 6px; color: var(--red); }
+.dbar-pos .bar-val { margin-left: 6px; color: var(--green); }
+
+/* ---------- Statistik-Kacheln ---------- */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-tile {
+  background: linear-gradient(150deg, var(--glass-strong), var(--glass));
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+}
+.stat-value { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 2px; }
+.stat-label { font-size: 0.72rem; font-weight: 600; color: var(--text-muted); }
+.icon-btn {
+  background: var(--glass); border: 1px solid var(--glass-border);
+  color: var(--text-muted); border-radius: 10px; padding: 6px 10px;
+  cursor: pointer; font-size: 0.8rem;
+}
+
+/* ---------- Kompakte Benutzerverwaltung ---------- */
+.list-item.compact { padding: 9px 12px; border-radius: 13px; gap: 10px; }
+.list-item.compact .item-icon { width: 32px; height: 32px; font-size: 16px; border-radius: 10px; }
+.list-item.compact .item-title { font-size: 0.88rem; }
+.list-item.compact .item-sub { font-size: 0.7rem; white-space: normal; }
+.search-input {
+  width: 100%; padding: 11px 14px; margin-bottom: 10px;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.28); color: var(--text); font: inherit; font-size: 0.95rem;
+  outline: none;
+}
+.filter-row { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.filter-chip {
+  border: 1px solid var(--glass-border); background: var(--glass);
+  color: var(--text-muted); font: inherit; font-size: 0.76rem; font-weight: 650;
+  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+}
+.filter-chip.active { background: rgba(244, 162, 89, 0.16); color: var(--accent); border-color: rgba(244,162,89,0.4); }
 
 /* ---------- Toast ---------- */
 .toast {

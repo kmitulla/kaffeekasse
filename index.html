@@ -79,14 +79,16 @@
     <div class="glass-card auth-card">
       <div class="app-logo">☕️</div>
       <h1 class="auth-title">Willkommen!</h1>
-      <p class="muted auth-sub">Erstelle ein Team oder tritt einem bei.</p>
+      <p class="muted auth-sub" id="noteam-sub">Tritt mit einem Einladungscode einem Team bei.</p>
       <div class="stack">
-        <div class="field">
-          <label for="new-team-name">Neues Team erstellen</label>
-          <input type="text" id="new-team-name" placeholder="z. B. Kaffeekasse Büro 3">
+        <div id="create-team-section" class="stack hidden">
+          <div class="field">
+            <label for="new-team-name">Neues Team erstellen</label>
+            <input type="text" id="new-team-name" placeholder="z. B. Kaffeekasse Büro 3">
+          </div>
+          <button class="btn btn-primary" id="btn-create-team">Team erstellen</button>
+          <div class="divider"><span>oder</span></div>
         </div>
-        <button class="btn btn-primary" id="btn-create-team">Team erstellen</button>
-        <div class="divider"><span>oder</span></div>
         <div class="field">
           <label for="join-code">Mit Einladungscode beitreten</label>
           <input type="text" id="join-code" placeholder="z. B. K7F3QX" autocapitalize="characters">
@@ -150,6 +152,35 @@
 
         <h3 class="section-title">Letzte 5 Ausgaben</h3>
         <div class="stack-list" id="recent-expenses"></div>
+
+        <h3 class="section-title">Ausgaben-Diagramm</h3>
+        <div class="glass-card chart-card">
+          <div class="chart-controls">
+            <select id="chart-dim" title="Gruppierung">
+              <option value="person">Nach Person</option>
+              <option value="cat">Nach Kategorie</option>
+              <option value="month">Nach Monat</option>
+            </select>
+            <select id="chart-period" title="Zeitraum">
+              <option value="30">30 Tage</option>
+              <option value="90" selected>90 Tage</option>
+              <option value="365">1 Jahr</option>
+              <option value="all">Alles</option>
+            </select>
+          </div>
+          <div id="chart-expenses"></div>
+        </div>
+
+        <h3 class="section-title">Salden – wer ist im Plus / Minus?</h3>
+        <div class="glass-card chart-card">
+          <div id="chart-balances"></div>
+        </div>
+
+        <div class="section-head">
+          <h3 class="section-title">Statistiken</h3>
+          <button class="icon-btn hidden" id="btn-stats-config" title="Statistiken konfigurieren">⚙️ Anpassen</button>
+        </div>
+        <div class="stats-grid" id="stats-grid"></div>
       </section>
 
       <!-- ---------- Tab: Ausgaben ---------- -->

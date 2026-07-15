@@ -71,6 +71,9 @@ Nicht jeder, der die Seite findet, kann die App benutzen:
   („Wartet auf Freischaltung“) und kann **nichts** sehen oder anlegen.
 - Der Master bekommt auf der Übersicht eine Karte **„Benutzerverwaltung“**
   und schaltet dort jedes Konto einzeln frei – oder sperrt es wieder.
+  Mit Suche, Statusfilter und Zeitstempeln (registriert / freigeschaltet / gesperrt).
+- **Nur der Master kann neue Teams erstellen.** Alle anderen treten per
+  Einladungscode bei.
 - Das ist auch serverseitig über die Firestore-Regeln abgesichert, nicht nur
   in der App-Oberfläche.
 
@@ -83,7 +86,7 @@ veröffentlichen.
 
 1. **Registrieren** (Name, E-Mail, Passwort). Man bleibt angemeldet.
    Danach muss der Master das Konto einmalig **freischalten**.
-2. Der Erste erstellt ein **Team** – er ist automatisch **Benutzer** (Inhaber, alle Rechte).
+2. Der **Master** erstellt ein **Team** – er ist automatisch **Benutzer** (Inhaber, alle Rechte).
 3. Auf dem Tab **Team** steht der **Einladungscode** – den an die Kollegen schicken.
 4. Kollegen registrieren sich und treten mit dem Code bei (Rolle: **User**).
 5. Der Inhaber kann Mitglieder zum **Admin** machen (Tab Team → Mitglied antippen).
@@ -102,7 +105,8 @@ veröffentlichen.
 - Beteiligung wahlweise **gleichmäßig** oder mit **individuellen Prozenten** (z. B. 10 / 40 / 50).
 - Admins können **Gruppen** anlegen (z. B. „Team Milch“) – dann reicht ein Tipp auf den Chip.
 - Das **Dashboard** zeigt deinen Saldo, wem du was schuldest bzw. wer dir was schuldet, und die letzten 5 Ausgaben.
-- **Ausgleich:** Der Schuldner tippt „Ich habe bezahlt“ → der Empfänger bestätigt, sobald das Geld da ist. Erst dann gilt es als ausgeglichen. Der Empfänger kann den Erhalt auch direkt selbst verbuchen.
+- **Ausgleich:** Der Schuldner tippt „Ich habe bezahlt“ → der Empfänger bestätigt, sobald das Geld da ist. Erst dann gilt es als ausgeglichen. Der Empfänger kann den Erhalt auch direkt selbst verbuchen. Im Zahlungsverlauf steht mit Datum und Uhrzeit, wann gemeldet und wann bestätigt wurde – Admin/Benutzer können Zahlungen bearbeiten oder löschen (rückgängig machen).
+- **Diagramme & Statistiken:** Das Dashboard zeigt ein konfigurierbares Ausgaben-Diagramm (nach Person, Kategorie oder Monat, mit Zeitraum), ein Salden-Diagramm (wer ist im Plus/Minus) und Statistik-Kacheln (z. B. Ø pro Monat, Summe für Kaffee oder Milch). Der Team-Inhaber kann über „⚙️ Anpassen“ wählen, welche Kennzahlen und Kategorien angezeigt werden.
 - **Mitglied verlässt das Team:** Admin entfernt es; ein offener Restbetrag kann auf die anderen verteilt werden – auch prozentual unterschiedlich.
 - **Neue Mitglieder** starten ab ihrem Beitrittsdatum und sind von älteren Ausgaben nicht betroffen.
 

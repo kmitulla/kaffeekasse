@@ -73,7 +73,8 @@ service cloud.firestore {
       // Abfragen/Auflisten aller Teams ist NICHT erlaubt.
       allow get: if isApproved();
       allow list: if false;
-      allow create: if isApproved()
+      // Neue Teams darf nur der Master erstellen.
+      allow create: if isMaster()
         && request.resource.data.ownerUid == request.auth.uid;
       allow update: if isOwner(teamId);
       allow delete: if isOwner(teamId);
@@ -140,13 +141,18 @@ service cloud.firestore {
           || (request.resource.data.status == 'confirmed'
             && request.resource.data.to == request.auth.uid)
         );
-        // Nur der Empfaenger darf eine offene Zahlung bestaetigen.
-        allow update: if isMember(teamId)
-          && request.auth.uid == resource.data.to
-          && resource.data.status == 'pending'
-          && request.resource.data.status == 'confirmed'
-          && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['status', 'confirmedAt']);
+        // Der Empfaenger darf eine offene Zahlung bestaetigen;
+        // Admin/Benutzer duerfen Zahlungen bearbeiten (Betrag, Status).
+        allow update: if isMember(teamId) && (
+          (request.auth.uid == resource.data.to
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'confirmed'
+            && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'confirmedAt']))
+          || (isAdmin(teamId)
+              && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['amount', 'status', 'confirmedAt', 'note']))
+        );
         // Zahler darf eigene offene Meldung zurueckziehen; Admin darf loeschen.
         allow delete: if isMember(teamId) && (
           (resource.data.status == 'pending' && resource.data.from == request.auth.uid)
