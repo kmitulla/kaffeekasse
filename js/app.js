@@ -12,6 +12,7 @@ import {
   formatCents, parseEuro, splitByPercent, equalPercents,
   computeBalances, simplifyDebts
 } from "./balance.js";
+import { MASTER_EMAIL } from "./firebase-config.js";
 
 // ---------------------------------------------------------
 // Zustand
@@ -29,6 +30,8 @@ const state = {
   activeTab: "dashboard",
   teamUnsubs: [],
   profileUnsub: null,
+  usersUnsub: null,
+  allUsers: [],
   online: navigator.onLine,
   pendingWrites: false,
   teamNameCache: {}
@@ -40,6 +43,10 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
 
 const ROLE_LABEL = { owner: "Benutzer", admin: "Admin", user: "User" };
 const ROLE_BADGE = { owner: "badge-owner", admin: "badge-admin", user: "badge-user" };
+
+function isMasterUser() {
+  return (state.user?.email || "").toLowerCase() === MASTER_EMAIL.toLowerCase();
+}
 
 function myRole() {
   const m = state.members[state.user?.uid];
@@ -144,7 +151,7 @@ function setPending(key, val) {
 // Ansichten umschalten
 // ---------------------------------------------------------
 function showView(name) {
-  for (const v of ["view-loading", "view-auth", "view-noteam", "view-app"]) {
+  for (const v of ["view-loading", "view-auth", "view-pending", "view-noteam", "view-app"]) {
     $(v).classList.toggle("hidden", v !== `view-${name}`);
   }
 }
@@ -201,8 +208,9 @@ $("auth-form").addEventListener("submit", async (e) => {
       if (!name) throw { code: "custom", message: "Bitte gib deinen Namen ein." };
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       await updateProfile(cred.user, { displayName: name });
+      const isMaster = email.toLowerCase() === MASTER_EMAIL.toLowerCase();
       await setDoc(doc(db, "users", cred.user.uid), {
-        name, email, teams: [], createdAt: serverTimestamp()
+        name, email, teams: [], approved: isMaster, createdAt: serverTimestamp()
       });
     } else {
       await signInWithEmailAndPassword(auth, email, pass);
@@ -228,6 +236,75 @@ $("auth-forgot").addEventListener("click", async () => {
 
 $("noteam-signout").addEventListener("click", () => signOut(auth));
 $("noteam-back").addEventListener("click", () => showView("app"));
+$("pending-signout").addEventListener("click", () => signOut(auth));
+
+// ---------------------------------------------------------
+// Master: Konten freischalten
+// ---------------------------------------------------------
+function pendingUsers() {
+  return state.allUsers.filter(u =>
+    u.approved !== true && (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase());
+}
+
+function renderMasterUI() {
+  const master = state.user && isMasterUser();
+  $("master-card").classList.toggle("hidden", !master);
+  $("noteam-master").classList.toggle("hidden", !master);
+  if (!master) return;
+  const n = pendingUsers().length;
+  $("master-card-sub").textContent = n
+    ? `${n} ${n === 1 ? "Konto wartet" : "Konten warten"} auf Freischaltung`
+    : "Alle Konten sind freigeschaltet";
+  $("master-card-badge").classList.toggle("hidden", n === 0);
+  $("master-card-badge").textContent = n;
+  $("noteam-master").textContent = n
+    ? `🔑 Benutzerverwaltung (${n} offen)` : "🔑 Benutzerverwaltung";
+}
+
+$("master-card").addEventListener("click", openUserAdminModal);
+$("noteam-master").addEventListener("click", openUserAdminModal);
+
+function openUserAdminModal() {
+  const users = state.allUsers
+    .filter(u => (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase())
+    .sort((a, b) => (a.approved === true ? 1 : 0) - (b.approved === true ? 1 : 0)
+      || (a.name || "").localeCompare(b.name || ""));
+  openModal(`
+    <h3 class="modal-title">Benutzerverwaltung</h3>
+    <p class="muted small" style="margin-bottom:12px">Neue Konten können die App erst
+      benutzen, nachdem du sie hier freigeschaltet hast.</p>
+    <div class="stack-list">
+      ${users.length ? users.map(u => `
+        <div class="list-item">
+          <div class="item-icon">${u.approved === true ? "✅" : "⏳"}</div>
+          <div class="item-main">
+            <div class="item-title">${esc(u.name || "Ohne Name")}</div>
+            <div class="item-sub">${esc(u.email || "")} · ${u.approved === true ? "freigeschaltet" : "wartet auf Freischaltung"}</div>
+          </div>
+          ${u.approved === true
+            ? `<button class="btn btn-small btn-danger" data-block="${esc(u.uid)}">Sperren</button>`
+            : `<button class="btn btn-small btn-primary" data-approve="${esc(u.uid)}">Freischalten</button>`}
+        </div>`).join("")
+      : `<div class="empty-note">Bisher hat sich niemand sonst registriert.</div>`}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="ua-close">Schließen</button>
+    </div>`);
+  $("ua-close").addEventListener("click", closeModal);
+  $("modal-box").querySelectorAll("[data-approve]").forEach(b =>
+    b.addEventListener("click", async () => {
+      await updateDoc(doc(db, "users", b.dataset.approve), { approved: true });
+      toast("Konto freigeschaltet ✅");
+      openUserAdminModal();
+    }));
+  $("modal-box").querySelectorAll("[data-block]").forEach(b =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Dieses Konto sperren? Die Person kann die App dann nicht mehr benutzen, bis du sie wieder freischaltest.")) return;
+      await updateDoc(doc(db, "users", b.dataset.block), { approved: false });
+      toast("Konto gesperrt.");
+      openUserAdminModal();
+    }));
+}
 
 // ---------------------------------------------------------
 // Start: Auth-Status beobachten
@@ -235,13 +312,27 @@ $("noteam-back").addEventListener("click", () => showView("app"));
 onAuthStateChanged(auth, async (user) => {
   cleanupTeam();
   if (state.profileUnsub) { state.profileUnsub(); state.profileUnsub = null; }
+  if (state.usersUnsub) { state.usersUnsub(); state.usersUnsub = null; }
+  state.allUsers = [];
   state.user = user;
+  switchTab("dashboard");
   if (!user) {
     state.profile = null;
     showView("auth");
     return;
   }
   showView("loading");
+
+  // Master: alle Konten beobachten (für die Freischaltung)
+  if (isMasterUser()) {
+    state.usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ uid: d.id, ...d.data() }));
+      state.allUsers = list;
+      renderMasterUI();
+    }, err => console.error("users:", err));
+  }
+  renderMasterUI();
 
   // Profil beobachten (Name, Teamliste)
   const ref = doc(db, "users", user.uid);
@@ -250,12 +341,21 @@ onAuthStateChanged(auth, async (user) => {
       // Profil fehlt (z. B. Konto existierte schon) -> anlegen
       await setDoc(ref, {
         name: user.displayName || user.email.split("@")[0],
-        email: user.email, teams: [], createdAt: serverTimestamp()
+        email: user.email, teams: [], approved: isMasterUser(),
+        createdAt: serverTimestamp()
       });
       return;
     }
     state.profile = snap.data();
     $("avatar-initials").textContent = initials(state.profile.name);
+
+    // Noch nicht vom Master freigeschaltet? -> Warte-Ansicht
+    if (!isMasterUser() && state.profile.approved !== true) {
+      cleanupTeam();
+      showView("pending");
+      return;
+    }
+
     const teams = state.profile.teams || [];
     if (teams.length === 0) {
       cleanupTeam();

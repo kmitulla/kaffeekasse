@@ -14,12 +14,26 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Der Master schaltet neue Konten frei. Muss identisch sein mit
+    // MASTER_EMAIL in js/firebase-config.js!
+    function isMaster() {
+      return signedIn() && request.auth.token.email == 'k.mitulla@gmail.com';
+    }
+
+    // Nur vom Master freigeschaltete Konten duerfen die App nutzen.
+    function isApproved() {
+      return signedIn() && (
+        isMaster()
+        || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true
+      );
+    }
+
     function memberDoc(teamId) {
       return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
     }
 
     function isMember(teamId) {
-      return signedIn()
+      return isApproved()
         && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
         && memberDoc(teamId).data.active == true;
     }
@@ -39,18 +53,27 @@ service cloud.firestore {
 
     // ---------- Benutzerprofile ----------
     match /users/{uid} {
-      allow read: if signedIn();
-      allow create, update: if signedIn() && request.auth.uid == uid;
-      allow delete: if false;
+      // Jeder sieht nur sein eigenes Profil; der Master sieht alle
+      // (fuer die Freischaltung neuer Konten).
+      allow get: if signedIn() && (request.auth.uid == uid || isMaster());
+      allow list: if isMaster();
+      // Neue Konten starten IMMER als "nicht freigeschaltet".
+      allow create: if signedIn() && request.auth.uid == uid
+        && (request.resource.data.approved == false || isMaster());
+      // Nur der Master darf das Feld 'approved' aendern.
+      allow update: if isMaster()
+        || (signedIn() && request.auth.uid == uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved']));
+      allow delete: if isMaster();
     }
 
     // ---------- Teams ----------
     match /teams/{teamId} {
       // Einzelabruf erlaubt (noetig, um per Einladungscode beizutreten).
       // Abfragen/Auflisten aller Teams ist NICHT erlaubt.
-      allow get: if signedIn();
+      allow get: if isApproved();
       allow list: if false;
-      allow create: if signedIn()
+      allow create: if isApproved()
         && request.resource.data.ownerUid == request.auth.uid;
       allow update: if isOwner(teamId);
       allow delete: if isOwner(teamId);
@@ -61,7 +84,7 @@ service cloud.firestore {
           && (request.auth.uid == uid || isMember(teamId));
         // Selbst beitreten (nur als einfacher User), durch Admin/Benutzer,
         // oder: der Team-Ersteller legt sich selbst als 'owner' an.
-        allow create: if signedIn() && (
+        allow create: if isApproved() && (
           (request.auth.uid == uid && request.resource.data.role == 'user')
           || isAdmin(teamId)
           || (request.auth.uid == uid

@@ -2,6 +2,10 @@
 // Hinweis: Der apiKey ist KEIN Geheimnis – er identifiziert nur dein
 // Firebase-Projekt. Der Schutz der Daten passiert über die
 // Firestore-Sicherheitsregeln (siehe firestore.rules) und Firebase Auth.
+// Der Master schaltet neue Konten frei. Muss identisch sein mit der
+// E-Mail in der Funktion isMaster() in firestore.rules!
+export const MASTER_EMAIL = "k.mitulla@gmail.com";
+
 export const firebaseConfig = {
   apiKey: "AIzaSyDWJO4gCy2WkyJaOKx-lMKPTgOIal3VPB4",
   authDomain: "kaffeekasse-a06c7.firebaseapp.com",

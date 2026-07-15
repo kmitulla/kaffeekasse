@@ -62,9 +62,27 @@ bestimmen allein diese Regeln:
 2. Teilen-Symbol → **„Zum Home-Bildschirm“**.
 3. Fertig – die App startet dann im Vollbild mit eigenem Icon.
 
+## 🔑 Freischaltung neuer Konten (Master)
+
+Nicht jeder, der die Seite findet, kann die App benutzen:
+
+- Das Konto **k.mitulla@gmail.com** ist der **Master**.
+- Jedes neue Konto landet nach der Registrierung auf einer Warteseite
+  („Wartet auf Freischaltung“) und kann **nichts** sehen oder anlegen.
+- Der Master bekommt auf der Übersicht eine Karte **„Benutzerverwaltung“**
+  und schaltet dort jedes Konto einzeln frei – oder sperrt es wieder.
+- Das ist auch serverseitig über die Firestore-Regeln abgesichert, nicht nur
+  in der App-Oberfläche.
+
+Falls sich die Master-E-Mail einmal ändern soll: Sie steht an **zwei** Stellen
+und muss an beiden geändert werden – in `js/firebase-config.js` (MASTER_EMAIL)
+und in `firestore.rules` (Funktion `isMaster`), danach die Regeln neu
+veröffentlichen.
+
 ## 👥 So benutzt ihr die App
 
 1. **Registrieren** (Name, E-Mail, Passwort). Man bleibt angemeldet.
+   Danach muss der Master das Konto einmalig **freischalten**.
 2. Der Erste erstellt ein **Team** – er ist automatisch **Benutzer** (Inhaber, alle Rechte).
 3. Auf dem Tab **Team** steht der **Einladungscode** – den an die Kollegen schicken.
 4. Kollegen registrieren sich und treten mit dem Code bei (Rolle: **User**).

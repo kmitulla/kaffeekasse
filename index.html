@@ -60,6 +60,20 @@
     </div>
   </div>
 
+  <!-- ===================== Warten auf Freischaltung ===================== -->
+  <div id="view-pending" class="fullscreen-center hidden">
+    <div class="glass-card auth-card">
+      <div class="app-logo">⏳</div>
+      <h1 class="auth-title">Fast geschafft!</h1>
+      <p class="muted auth-sub">Dein Konto wurde erstellt und wartet jetzt auf die
+        Freischaltung durch den Verwalter.<br><br>
+        Sobald du freigeschaltet wurdest, geht es hier automatisch weiter.</p>
+      <div class="stack">
+        <button class="btn btn-secondary" id="pending-signout">Abmelden</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== Team wählen / erstellen ===================== -->
   <div id="view-noteam" class="fullscreen-center hidden">
     <div class="glass-card auth-card">
@@ -78,6 +92,7 @@
           <input type="text" id="join-code" placeholder="z. B. K7F3QX" autocapitalize="characters">
         </div>
         <button class="btn btn-secondary" id="btn-join-team">Team beitreten</button>
+        <button class="btn btn-secondary hidden" id="noteam-master">🔑 Benutzerverwaltung</button>
         <p id="noteam-error" class="error-text hidden"></p>
         <button type="button" class="btn-link hidden" id="noteam-back">Zurück zur App</button>
         <button type="button" class="btn-link" id="noteam-signout">Abmelden</button>
@@ -107,6 +122,15 @@
       <!-- ---------- Tab: Übersicht ---------- -->
       <section id="tab-dashboard" class="tab-page">
         <h2 class="page-title">Übersicht</h2>
+
+        <div class="list-item tappable hidden" id="master-card" style="margin-bottom:14px">
+          <div class="item-icon">🔑</div>
+          <div class="item-main">
+            <div class="item-title">Benutzerverwaltung</div>
+            <div class="item-sub" id="master-card-sub">Konten freischalten</div>
+          </div>
+          <span class="badge badge-pending hidden" id="master-card-badge"></span>
+        </div>
 
         <div class="glass-card balance-hero">
           <p class="muted small">Dein Saldo</p>
