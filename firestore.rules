@@ -1,0 +1,135 @@
+rules_version = '2';
+
+// ============================================================
+// Kaffeekasse – Firestore Sicherheitsregeln
+// Diese Regeln schützen deine Daten, auch wenn der API-Key
+// öffentlich im Code steht (das ist bei Firebase normal).
+// Einfügen unter: Firebase Console > Firestore Database > Regeln
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberDoc(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    }
+
+    function isMember(teamId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
+        && memberDoc(teamId).data.active == true;
+    }
+
+    function roleOf(teamId) {
+      return memberDoc(teamId).data.role;
+    }
+
+    // "Benutzer" (owner) hat alle Rechte, Admin die meisten
+    function isAdmin(teamId) {
+      return isMember(teamId) && roleOf(teamId) in ['owner', 'admin'];
+    }
+
+    function isOwner(teamId) {
+      return isMember(teamId) && roleOf(teamId) == 'owner';
+    }
+
+    // ---------- Benutzerprofile ----------
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // ---------- Teams ----------
+    match /teams/{teamId} {
+      // Einzelabruf erlaubt (noetig, um per Einladungscode beizutreten).
+      // Abfragen/Auflisten aller Teams ist NICHT erlaubt.
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isOwner(teamId);
+      allow delete: if isOwner(teamId);
+
+      // ---------- Mitglieder ----------
+      match /members/{uid} {
+        allow read: if signedIn()
+          && (request.auth.uid == uid || isMember(teamId));
+        // Selbst beitreten (nur als einfacher User), durch Admin/Benutzer,
+        // oder: der Team-Ersteller legt sich selbst als 'owner' an.
+        allow create: if signedIn() && (
+          (request.auth.uid == uid && request.resource.data.role == 'user')
+          || isAdmin(teamId)
+          || (request.auth.uid == uid
+              && request.resource.data.role == 'owner'
+              && get(/databases/$(database)/documents/teams/$(teamId)).data.ownerUid == request.auth.uid)
+        );
+        // Admin/Benutzer verwalten Mitglieder; die Rolle 'owner'
+        // darf nur der Benutzer (owner) selbst vergeben/aendern.
+        // Jeder darf seinen eigenen Anzeigenamen im Team aendern.
+        allow update: if signedIn() && (
+          (isAdmin(teamId)
+            && resource.data.role != 'owner'
+            && request.resource.data.role != 'owner')
+          || isOwner(teamId)
+          || (request.auth.uid == uid
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']))
+        );
+        allow delete: if signedIn() && (
+          (isAdmin(teamId) && resource.data.role != 'owner')
+          || (request.auth.uid == uid && resource.data.role != 'owner')
+          || isOwner(teamId)
+        );
+      }
+
+      // ---------- Ausgaben ----------
+      match /expenses/{expenseId} {
+        allow read: if isMember(teamId);
+        // Jedes Mitglied darf eigene Ausgaben anlegen.
+        // Verrechnungen (type 'adjustment', z.B. beim Entfernen
+        // eines Mitglieds) darf nur Admin/Benutzer anlegen.
+        allow create: if isMember(teamId)
+          && request.resource.data.createdBy == request.auth.uid
+          && (request.resource.data.type == 'expense' || isAdmin(teamId));
+        // Eigene Ausgaben aendern/loeschen; Admin/Benutzer alle.
+        allow update, delete: if isMember(teamId)
+          && (resource.data.createdBy == request.auth.uid || isAdmin(teamId));
+      }
+
+      // ---------- Presets / Gruppen (z.B. "Team Milch") ----------
+      match /presets/{presetId} {
+        allow read: if isMember(teamId);
+        allow create, update, delete: if isAdmin(teamId);
+      }
+
+      // ---------- Ausgleichszahlungen ----------
+      match /settlements/{settlementId} {
+        allow read: if isMember(teamId);
+        // Zahler meldet "bezahlt" (pending) ODER Empfaenger
+        // bestaetigt direkt selbst (confirmed).
+        allow create: if isMember(teamId) && (
+          (request.resource.data.status == 'pending'
+            && request.resource.data.from == request.auth.uid)
+          || (request.resource.data.status == 'confirmed'
+            && request.resource.data.to == request.auth.uid)
+        );
+        // Nur der Empfaenger darf eine offene Zahlung bestaetigen.
+        allow update: if isMember(teamId)
+          && request.auth.uid == resource.data.to
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'confirmed'
+          && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'confirmedAt']);
+        // Zahler darf eigene offene Meldung zurueckziehen; Admin darf loeschen.
+        allow delete: if isMember(teamId) && (
+          (resource.data.status == 'pending' && resource.data.from == request.auth.uid)
+          || isAdmin(teamId)
+        );
+      }
+    }
+  }
+}

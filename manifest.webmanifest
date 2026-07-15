@@ -1,0 +1,17 @@
+{
+  "name": "Kaffeekasse",
+  "short_name": "Kaffeekasse",
+  "description": "Ausgaben im Team fair teilen – wer hat was für wen gekauft?",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14100f",
+  "theme_color": "#1c1017",
+  "lang": "de",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
