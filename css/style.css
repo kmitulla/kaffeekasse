@@ -452,3 +452,13 @@ input[type="checkbox"]:checked {
 @media (prefers-reduced-motion: reduce) {
   .blob, .pulse { animation: none !important; }
 }
+
+/* ---------- Schmale Geräte (z. B. iPhone 13 mini): Kopfzeile entzerren ---------- */
+@media (max-width: 430px) {
+  .app-header { padding-left: 10px; padding-right: 10px; }
+  .header-team { max-width: 42vw; font-size: 0.9rem; padding: 7px 12px; }
+  .header-right { gap: 7px; }
+  .sync-pill { padding: 8px; }
+  .sync-pill #sync-label { display: none; } /* nur der Status-Punkt; Antippen zeigt Details */
+  .avatar-btn { width: 36px; height: 36px; }
+}

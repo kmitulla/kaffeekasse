@@ -6,8 +6,10 @@ import {
   onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
   sendPasswordResetEmail, updateProfile, signOut,
   doc, collection, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, arrayUnion, arrayRemove
+  onSnapshot, query, orderBy, serverTimestamp, arrayUnion, arrayRemove,
+  secondaryCreateUser
 } from "./firebase.js";
+import { makeXlsx, makePdf, download } from "./export.js";
 import {
   formatCents, parseEuro, splitByPercent, equalPercents,
   computeBalances, simplifyDebts
@@ -32,6 +34,8 @@ const state = {
   profileUnsub: null,
   usersUnsub: null,
   allUsers: [],
+  pwResetsUnsub: null,
+  pwResets: [],
   online: navigator.onLine,
   pendingWrites: false,
   teamNameCache: {}
@@ -179,6 +183,8 @@ function renderSync() {
 }
 window.addEventListener("online", () => { state.online = true; renderSync(); });
 window.addEventListener("offline", () => { state.online = false; renderSync(); });
+// Auf schmalen Handys wird nur der Punkt gezeigt – Antippen nennt den Status
+$("sync-pill").addEventListener("click", () => toast("Status: " + $("sync-label").textContent));
 
 const pendingFlags = {};
 function setPending(key, val) {
@@ -263,14 +269,19 @@ $("auth-form").addEventListener("submit", async (e) => {
   }
 });
 
+// "Passwort vergessen": erzeugt eine Anfrage, die der Verwalter
+// freigeben muss – erst dann geht die Zurücksetzungs-E-Mail raus.
 $("auth-forgot").addEventListener("click", async () => {
   const email = $("auth-email").value.trim();
-  if (!email) { toast("Bitte zuerst deine E-Mail eintragen."); return; }
+  if (!email || !email.includes("@")) { toast("Bitte zuerst deine E-Mail eintragen."); return; }
   try {
-    await sendPasswordResetEmail(auth, email);
-    toast("E-Mail zum Zurücksetzen wurde gesendet.");
+    await addDoc(collection(db, "pwResets"), {
+      email, requestedAt: serverTimestamp(), status: "open"
+    });
+    toast("Der Verwalter wurde informiert und gibt die Zurücksetzung frei. Du bekommst dann eine E-Mail.");
   } catch (err) {
-    toast(authErrorText(err));
+    console.error(err);
+    toast("Anfrage konnte nicht gesendet werden.");
   }
 });
 
@@ -286,6 +297,10 @@ function pendingUsers() {
     u.approved !== true && (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase());
 }
 
+function openResets() {
+  return state.pwResets.filter(r => r.status === "open");
+}
+
 function renderMasterUI() {
   const master = state.user && isMasterUser();
   $("master-card").classList.toggle("hidden", !master);
@@ -295,10 +310,11 @@ function renderMasterUI() {
     ? "Erstelle ein Team oder tritt einem bei."
     : "Tritt mit einem Einladungscode einem Team bei.";
   if (!master) return;
-  const n = pendingUsers().length;
-  $("master-card-sub").textContent = n
-    ? `${n} ${n === 1 ? "Konto wartet" : "Konten warten"} auf Freischaltung`
-    : "Alle Konten sind freigeschaltet";
+  const n = pendingUsers().length + openResets().length;
+  const parts = [];
+  if (pendingUsers().length) parts.push(`${pendingUsers().length} Freischaltung(en)`);
+  if (openResets().length) parts.push(`${openResets().length} Passwort-Anfrage(n)`);
+  $("master-card-sub").textContent = parts.length ? `Offen: ${parts.join(", ")}` : "Nichts offen";
   $("master-card-badge").classList.toggle("hidden", n === 0);
   $("master-card-badge").textContent = n;
   $("noteam-master").textContent = n
@@ -325,7 +341,11 @@ function openUserAdminModal() {
   uaState.search = "";
   uaState.filter = "alle";
   openModal(`
-    <h3 class="modal-title">Benutzerverwaltung</h3>
+    <div class="section-head" style="margin-bottom:10px">
+      <h3 class="modal-title" style="margin-bottom:0">Benutzerverwaltung</h3>
+      <button class="btn btn-small btn-primary" id="ua-create">+ Nutzer anlegen</button>
+    </div>
+    <div id="ua-resets"></div>
     <input type="search" class="search-input" id="ua-search" placeholder="Nach Name oder E-Mail suchen …">
     <div class="filter-row" id="ua-filters">
       ${["alle", "wartet", "aktiv", "gesperrt"].map(f =>
@@ -336,6 +356,7 @@ function openUserAdminModal() {
       <button class="btn btn-secondary" id="ua-close">Schließen</button>
     </div>`);
   $("ua-close").addEventListener("click", closeModal);
+  $("ua-create").addEventListener("click", openCreateUserModal);
   $("ua-search").addEventListener("input", () => {
     uaState.search = $("ua-search").value.trim().toLowerCase();
     renderUserAdminList();
@@ -353,6 +374,45 @@ function openUserAdminModal() {
 function renderUserAdminList() {
   const box = $("ua-list");
   if (!box) return;
+
+  // Offene Passwort-Anfragen
+  const resetsBox = $("ua-resets");
+  const resets = openResets();
+  resetsBox.innerHTML = resets.length ? `
+    <h3 class="section-title" style="margin-top:0">🔒 Passwort-Anfragen</h3>
+    <div class="stack-list" style="margin-bottom:14px">
+      ${resets.map(r => `
+        <div class="list-item compact">
+          <div class="item-icon">🔒</div>
+          <div class="item-main">
+            <div class="item-title">${esc(r.email)}</div>
+            <div class="item-sub">Angefragt: ${esc(fmtDateTime(r.requestedAt) || "–")}</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <button class="btn btn-small btn-primary" data-rok="${esc(r.id)}">Freigeben</button>
+            <button class="btn btn-small btn-secondary" data-rno="${esc(r.id)}">Ablehnen</button>
+          </div>
+        </div>`).join("")}
+    </div>` : "";
+  resetsBox.querySelectorAll("[data-rok]").forEach(b =>
+    b.addEventListener("click", async () => {
+      const r = state.pwResets.find(x => x.id === b.dataset.rok);
+      if (!r) return;
+      try {
+        await sendPasswordResetEmail(auth, r.email);
+        await updateDoc(doc(db, "pwResets", r.id), { status: "done", doneAt: serverTimestamp() });
+        toast(`Zurücksetzungs-E-Mail an ${r.email} gesendet ✅`);
+      } catch (err) {
+        console.error(err);
+        toast("E-Mail konnte nicht gesendet werden.");
+      }
+    }));
+  resetsBox.querySelectorAll("[data-rno]").forEach(b =>
+    b.addEventListener("click", async () => {
+      await deleteDoc(doc(db, "pwResets", b.dataset.rno));
+      toast("Anfrage abgelehnt.");
+    }));
+
   const users = state.allUsers
     .filter(u => (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase())
     .filter(u => !uaState.search
@@ -371,7 +431,7 @@ function renderUserAdminList() {
       u.blockedAt && u.approved !== true ? `Gesperrt: ${fmtDateTime(u.blockedAt)}` : ""
     ].filter(Boolean).join("<br>");
     return `
-      <div class="list-item compact">
+      <div class="list-item compact tappable" data-detail="${esc(u.uid)}">
         <div class="item-icon">${st.icon}</div>
         <div class="item-main">
           <div class="item-title">${esc(u.name || "Ohne Name")}</div>
@@ -383,21 +443,225 @@ function renderUserAdminList() {
       </div>`;
   }).join("") : `<div class="empty-note">Keine Konten gefunden.</div>`;
 
+  box.querySelectorAll("[data-detail]").forEach(el =>
+    el.addEventListener("click", () => openUserDetailModal(el.dataset.detail)));
   box.querySelectorAll("[data-approve]").forEach(b =>
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
       await updateDoc(doc(db, "users", b.dataset.approve), {
         approved: true, approvedAt: serverTimestamp()
       });
       toast("Konto freigeschaltet ✅");
     }));
   box.querySelectorAll("[data-block]").forEach(b =>
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
       if (!confirm("Dieses Konto sperren? Die Person kann die App dann nicht mehr benutzen, bis du sie wieder freischaltest.")) return;
       await updateDoc(doc(db, "users", b.dataset.block), {
         approved: false, blockedAt: serverTimestamp()
       });
       toast("Konto gesperrt.");
     }));
+}
+
+// Teamname mit Cache laden
+async function getTeamName(teamId) {
+  if (!state.teamNameCache[teamId]) {
+    try {
+      const snap = await getDoc(doc(db, "teams", teamId));
+      state.teamNameCache[teamId] = snap.exists() ? snap.data().name : teamId;
+    } catch { state.teamNameCache[teamId] = teamId; }
+  }
+  return state.teamNameCache[teamId];
+}
+
+// ---------- Master: Nutzer-Detail (Teams verwalten, Passwort) ----------
+async function openUserDetailModal(uid) {
+  const u = state.allUsers.find(x => x.uid === uid);
+  if (!u || !isMasterUser()) return;
+
+  // Team-Mitgliedschaften des Nutzers laden
+  const userTeams = [];
+  for (const tid of u.teams || []) {
+    const name = await getTeamName(tid);
+    let member = null;
+    try {
+      const snap = await getDoc(doc(db, "teams", tid, "members", uid));
+      if (snap.exists()) member = snap.data();
+    } catch { /* kein Zugriff */ }
+    userTeams.push({ tid, name, member });
+  }
+  const myTeams = state.profile?.teams || [];
+  const addable = [];
+  for (const tid of myTeams) {
+    if (!(u.teams || []).includes(tid)) addable.push({ tid, name: await getTeamName(tid) });
+  }
+
+  const st = UA_STATUS[userStatus(u)];
+  openModal(`
+    <h3 class="modal-title">${st.icon} ${esc(u.name || "Ohne Name")}</h3>
+    <p class="muted small" style="margin-bottom:12px">${esc(u.email || "")} · ${st.label}</p>
+    <div class="stack">
+      <h3 class="section-title" style="margin-top:0">Teams</h3>
+      ${userTeams.length ? userTeams.map(t => `
+        <div class="list-item compact">
+          <div class="item-icon">${t.member?.active === false ? "🚪" : "👥"}</div>
+          <div class="item-main">
+            <div class="item-title">${esc(t.name)}</div>
+            <div class="item-sub">${t.member ? (t.member.active === false ? "Entfernt" : ROLE_LABEL[t.member.role] || t.member.role) : "Kein Mitgliedseintrag"}</div>
+          </div>
+          ${t.member && t.member.role !== "owner" && t.member.active !== false ? `
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <select class="pct-input" style="width:auto" data-role-team="${esc(t.tid)}">
+                <option value="user" ${t.member.role === "user" ? "selected" : ""}>User</option>
+                <option value="admin" ${t.member.role === "admin" ? "selected" : ""}>Admin</option>
+              </select>
+              <button class="btn btn-small btn-danger" data-rmteam="${esc(t.tid)}">Entfernen</button>
+            </div>` : ""}
+        </div>`).join("") : `<div class="empty-note">In keinem Team.</div>`}
+      ${addable.length ? `
+      <h3 class="section-title">Zu Team hinzufügen</h3>
+      <div style="display:flex;gap:8px">
+        <select id="ud-add-team" class="pct-input" style="width:auto;flex:1">
+          ${addable.map(t => `<option value="${esc(t.tid)}">${esc(t.name)}</option>`).join("")}
+        </select>
+        <select id="ud-add-role" class="pct-input" style="width:auto">
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button class="btn btn-small btn-primary" id="ud-add">Hinzufügen</button>
+      </div>` : ""}
+      <h3 class="section-title">Passwort</h3>
+      <button class="btn btn-secondary" id="ud-pwreset">Zurücksetzungs-E-Mail senden</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="ud-back">Zurück</button>
+    </div>`);
+
+  $("ud-back").addEventListener("click", openUserAdminModal);
+  $("ud-pwreset").addEventListener("click", async () => {
+    try {
+      await sendPasswordResetEmail(auth, u.email);
+      toast(`Zurücksetzungs-E-Mail an ${u.email} gesendet ✅`);
+    } catch (err) {
+      console.error(err);
+      toast("E-Mail konnte nicht gesendet werden.");
+    }
+  });
+  $("modal-box").querySelectorAll("[data-role-team]").forEach(sel =>
+    sel.addEventListener("change", async () => {
+      await updateDoc(doc(db, "teams", sel.dataset.roleTeam, "members", uid), { role: sel.value });
+      toast("Rolle geändert ✅");
+    }));
+  $("modal-box").querySelectorAll("[data-rmteam]").forEach(b =>
+    b.addEventListener("click", async () => {
+      if (!confirm(`${u.name} wirklich aus dem Team entfernen? Ein offener Saldo bleibt im Team sichtbar und kann dort verrechnet werden.`)) return;
+      await updateDoc(doc(db, "teams", b.dataset.rmteam, "members", uid), {
+        active: false, removedAt: serverTimestamp()
+      });
+      await updateDoc(doc(db, "users", uid), { teams: arrayRemove(b.dataset.rmteam) });
+      toast("Aus dem Team entfernt.");
+      openUserDetailModal(uid);
+    }));
+  const addBtn = $("ud-add");
+  if (addBtn) addBtn.addEventListener("click", async () => {
+    const tid = $("ud-add-team").value;
+    const role = $("ud-add-role").value;
+    await setDoc(doc(db, "teams", tid, "members", uid), {
+      name: u.name || "Neu", role, active: true,
+      joinedAt: serverTimestamp(), startDate: todayStr()
+    });
+    await updateDoc(doc(db, "users", uid), { teams: arrayUnion(tid) });
+    toast("Zum Team hinzugefügt ✅");
+    openUserDetailModal(uid);
+  });
+}
+
+// ---------- Master: Nutzer direkt anlegen ----------
+function openCreateUserModal() {
+  const myTeams = state.profile?.teams || [];
+  openModal(`
+    <h3 class="modal-title">Nutzer anlegen</h3>
+    <div class="stack">
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="cu-name" placeholder="z. B. Max">
+      </div>
+      <div class="field">
+        <label>E-Mail</label>
+        <input type="email" id="cu-email" placeholder="name@firma.de">
+      </div>
+      <div class="field">
+        <label>Passwort (optional)</label>
+        <input type="text" id="cu-pass" placeholder="Leer lassen: Person legt es per E-Mail selbst fest">
+      </div>
+      ${myTeams.length ? `
+      <div class="field">
+        <label>Direkt zu Team hinzufügen (optional)</label>
+        <select id="cu-team">
+          <option value="">– Kein Team –</option>
+          ${myTeams.map(t => `<option value="${esc(t)}">${esc(state.teamNameCache[t] || t)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field">
+        <label>Rolle im Team</label>
+        <select id="cu-role">
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>` : ""}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="cu-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="cu-save">Anlegen</button>
+    </div>`);
+  // Teamnamen nachladen (falls noch nicht im Cache)
+  (async () => {
+    for (const t of myTeams) {
+      const name = await getTeamName(t);
+      const opt = $("cu-team")?.querySelector(`option[value="${t}"]`);
+      if (opt) opt.textContent = name;
+    }
+  })();
+  $("cu-cancel").addEventListener("click", openUserAdminModal);
+  $("cu-save").addEventListener("click", async () => {
+    const name = $("cu-name").value.trim();
+    const email = $("cu-email").value.trim();
+    const pass = $("cu-pass").value;
+    const team = $("cu-team")?.value || "";
+    const role = $("cu-role")?.value || "user";
+    if (!name) { toast("Bitte einen Namen eingeben."); return; }
+    if (!email.includes("@")) { toast("Bitte eine gültige E-Mail eingeben."); return; }
+    if (pass && pass.length < 6) { toast("Das Passwort braucht mindestens 6 Zeichen."); return; }
+    $("cu-save").disabled = true;
+    try {
+      // Ohne Passwort: Zufallspasswort + E-Mail zum Selbst-Festlegen
+      const pw = pass || Array.from(crypto.getRandomValues(new Uint8Array(18)),
+        b => "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"[b % 54]).join("");
+      const uid = await secondaryCreateUser(email, pw);
+      await setDoc(doc(db, "users", uid), {
+        name, email, teams: team ? [team] : [],
+        approved: true, approvedAt: serverTimestamp(), createdAt: serverTimestamp()
+      });
+      if (team) {
+        await setDoc(doc(db, "teams", team, "members", uid), {
+          name, role, active: true,
+          joinedAt: serverTimestamp(), startDate: todayStr()
+        });
+      }
+      if (!pass) {
+        await sendPasswordResetEmail(auth, email);
+        toast(`Konto angelegt – ${email} bekommt eine E-Mail zum Passwort-Festlegen ✅`);
+      } else {
+        toast("Konto angelegt und freigeschaltet ✅");
+      }
+      openUserAdminModal();
+    } catch (err) {
+      console.error(err);
+      toast(authErrorText(err));
+      $("cu-save").disabled = false;
+    }
+  });
 }
 
 // ---------------------------------------------------------
@@ -407,7 +671,9 @@ onAuthStateChanged(auth, async (user) => {
   cleanupTeam();
   if (state.profileUnsub) { state.profileUnsub(); state.profileUnsub = null; }
   if (state.usersUnsub) { state.usersUnsub(); state.usersUnsub = null; }
+  if (state.pwResetsUnsub) { state.pwResetsUnsub(); state.pwResetsUnsub = null; }
   state.allUsers = [];
+  state.pwResets = [];
   state.user = user;
   switchTab("dashboard");
   if (!user) {
@@ -417,7 +683,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   showView("loading");
 
-  // Master: alle Konten beobachten (für die Freischaltung)
+  // Master: alle Konten + Passwort-Anfragen beobachten
   if (isMasterUser()) {
     state.usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
       const list = [];
@@ -425,6 +691,13 @@ onAuthStateChanged(auth, async (user) => {
       state.allUsers = list;
       renderMasterUI();
     }, err => console.error("users:", err));
+    state.pwResetsUnsub = onSnapshot(collection(db, "pwResets"), (snap) => {
+      const list = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      list.sort((a, b) => (b.requestedAt?.seconds || 0) - (a.requestedAt?.seconds || 0));
+      state.pwResets = list;
+      renderMasterUI();
+    }, err => console.error("pwResets:", err));
   }
   renderMasterUI();
 
@@ -1270,6 +1543,105 @@ function wirePicker(pickId) {
       return shares;
     }
   };
+}
+
+// ---------------------------------------------------------
+// Export (Excel / PDF, optional mit Zeitbereich)
+// ---------------------------------------------------------
+$("btn-export").addEventListener("click", () => {
+  openModal(`
+    <h3 class="modal-title">Export</h3>
+    <p class="muted small" style="margin-bottom:12px">Exportiert Ausgaben, Zahlungsverlauf
+      und aktuelle Salden. Zeitraum leer lassen = alles.</p>
+    <div style="display:flex;gap:10px">
+      <div class="field" style="flex:1">
+        <label>Von (optional)</label>
+        <input type="date" id="ex-from">
+      </div>
+      <div class="field" style="flex:1">
+        <label>Bis (optional)</label>
+        <input type="date" id="ex-to">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="ex-xlsx">📊 Excel (.xlsx)</button>
+      <button class="btn btn-primary" id="ex-pdf">📄 PDF</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="ex-cancel">Abbrechen</button>
+    </div>`);
+  $("ex-cancel").addEventListener("click", closeModal);
+  $("ex-xlsx").addEventListener("click", () => runExport("xlsx"));
+  $("ex-pdf").addEventListener("click", () => runExport("pdf"));
+});
+
+function buildExportData(from, to) {
+  const inRange = (d) => d && (!from || d >= from) && (!to || d <= to);
+  const isoOfTs = (ts) => ts?.seconds ? new Date(ts.seconds * 1000).toISOString().slice(0, 10) : "";
+  const euro = (cents) => Math.round(cents) / 100;
+
+  const exps = state.expenses.filter(e => inRange(e.date)).slice().reverse();
+  const expRows = [["Datum", "Was", "Kategorie", "Bezahlt von", "Betrag (€)", "Beteiligte"]];
+  for (const e of exps) {
+    if (e.type === "adjustment") {
+      expRows.push([fmtDate(e.date), e.title, "Verrechnung", "—", euro(e.amount),
+        Object.entries(e.shares).map(([u2, p]) => `${memberNameReal(u2)} ${p}%`).join(", ")]);
+    } else {
+      expRows.push([fmtDate(e.date), e.title, categoryFor(e.title).label,
+        memberNameReal(e.paidBy), euro(e.amount),
+        Object.entries(e.shares).map(([u2, p]) => `${memberNameReal(u2)} ${p}%`).join(", ")]);
+    }
+  }
+
+  const setts = state.settlements
+    .filter(s => { const d = isoOfTs(s.createdAt); return !d || inRange(d) || (!from && !to); })
+    .slice().reverse();
+  const settRows = [["Von", "An", "Betrag (€)", "Status", "Gemeldet am", "Bestätigt am"]];
+  for (const s of setts) {
+    settRows.push([memberNameReal(s.from), memberNameReal(s.to), euro(s.amount),
+      s.status === "confirmed" ? "Ausgeglichen" : "Offen",
+      fmtDateTime(s.createdAt) || "–", fmtDateTime(s.confirmedAt) || "–"]);
+  }
+
+  const balRows = [["Name", "Saldo (€)"]];
+  const bals = Object.entries(state.balances)
+    .filter(([uid2, b]) => state.members[uid2]?.active !== false || b !== 0)
+    .sort((a, b) => b[1] - a[1]);
+  for (const [uid2, b] of bals) balRows.push([memberNameReal(uid2), euro(b)]);
+
+  return { expRows, settRows, balRows };
+}
+
+function runExport(format) {
+  const from = $("ex-from").value || null;
+  const to = $("ex-to").value || null;
+  const { expRows, settRows, balRows } = buildExportData(from, to);
+  const teamName = state.team?.name || "Team";
+  const range = from || to ? `${from ? fmtDate(from) : "Anfang"} – ${to ? fmtDate(to) : "heute"}` : "gesamter Zeitraum";
+  const stamp = todayStr();
+  try {
+    if (format === "xlsx") {
+      const blob = makeXlsx([
+        { name: "Ausgaben", rows: expRows },
+        { name: "Zahlungsverlauf", rows: settRows },
+        { name: "Salden", rows: balRows }
+      ]);
+      download(blob, `Kaffeekasse_${stamp}.xlsx`);
+    } else {
+      const blob = makePdf(`Kaffeekasse – ${teamName}`,
+        `Export vom ${fmtDate(stamp)} · Zeitraum: ${range}`, [
+        { heading: "Ausgaben", headers: expRows[0], rows: expRows.slice(1).map(r => [r[0], r[1], r[2], r[3], r[4].toFixed(2).replace(".", ",") + " €", r[5]]), widths: [11, 20, 13, 13, 10, 26] },
+        { heading: "Zahlungsverlauf", headers: settRows[0], rows: settRows.slice(1).map(r => [r[0], r[1], r[2].toFixed(2).replace(".", ",") + " €", r[3], r[4], r[5]]), widths: [14, 14, 10, 12, 18, 18] },
+        { heading: "Aktuelle Salden", headers: balRows[0], rows: balRows.slice(1).map(r => [r[0], r[1].toFixed(2).replace(".", ",") + " €"]), widths: [30, 15] }
+      ]);
+      download(blob, `Kaffeekasse_${stamp}.pdf`);
+    }
+    closeModal();
+    toast("Export erstellt 📁");
+  } catch (err) {
+    console.error(err);
+    toast("Export fehlgeschlagen.");
+  }
 }
 
 // ---------------------------------------------------------

@@ -1,5 +1,5 @@
 // Initialisierung von Firebase (App, Auth, Firestore mit Offline-Cache)
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import {
   getAuth,
   onAuthStateChanged,
@@ -27,6 +27,21 @@ export const auth = getAuth(app);
 export const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
+
+// Legt ein Konto über eine zweite, getrennte Firebase-Instanz an,
+// damit der Master dabei selbst angemeldet bleibt.
+export async function secondaryCreateUser(email, password) {
+  const app2 = initializeApp(firebaseConfig, "zweitinstanz-" + Date.now());
+  try {
+    const auth2 = getAuth(app2);
+    const cred = await createUserWithEmailAndPassword(auth2, email, password);
+    const uid = cred.user.uid;
+    await signOut(auth2);
+    return uid;
+  } finally {
+    await deleteApp(app2).catch(() => {});
+  }
+}
 
 export {
   onAuthStateChanged,

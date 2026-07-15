@@ -77,6 +77,20 @@ Nicht jeder, der die Seite findet, kann die App benutzen:
 - Das ist auch serverseitig über die Firestore-Regeln abgesichert, nicht nur
   in der App-Oberfläche.
 
+### Was der Master außerdem kann
+
+- **Nutzer direkt anlegen** (Name, E-Mail, wahlweise mit Passwort – ohne
+  Passwort bekommt die Person eine E-Mail und legt es selbst fest).
+- **Teams pro Nutzer verwalten:** in der Benutzerverwaltung einen Nutzer
+  antippen → zu Teams hinzufügen, Rolle (User/Admin) ändern, aus Teams
+  entfernen (verschieben = entfernen + woanders hinzufügen).
+- **Passwort zurücksetzen:** sendet der Person eine Firebase-E-Mail, über
+  die sie ein neues Passwort festlegt. (Direktes Setzen fremder Passwörter
+  erlaubt Firebase aus Sicherheitsgründen nur mit eigenem Server.)
+- **„Passwort vergessen“-Freigabe:** Klickt jemand beim Anmelden auf
+  „Passwort vergessen?“, entsteht eine Anfrage beim Master. Erst wenn er
+  sie freigibt, geht die Zurücksetzungs-E-Mail raus.
+
 Falls sich die Master-E-Mail einmal ändern soll: Sie steht an **zwei** Stellen
 und muss an beiden geändert werden – in `js/firebase-config.js` (MASTER_EMAIL)
 und in `firestore.rules` (Funktion `isMaster`), danach die Regeln neu
@@ -106,6 +120,9 @@ veröffentlichen.
 - Admins können **Gruppen** anlegen (z. B. „Team Milch“) – dann reicht ein Tipp auf den Chip.
 - Das **Dashboard** zeigt deinen Saldo, wem du was schuldest bzw. wer dir was schuldet, und die letzten 5 Ausgaben.
 - **Ausgleich:** Der Schuldner tippt „Ich habe bezahlt“ → der Empfänger bestätigt, sobald das Geld da ist. Erst dann gilt es als ausgeglichen. Der Empfänger kann den Erhalt auch direkt selbst verbuchen. Im Zahlungsverlauf steht mit Datum und Uhrzeit, wann gemeldet und wann bestätigt wurde – Admin/Benutzer können Zahlungen bearbeiten oder löschen (rückgängig machen).
+- **Export:** Im Tab „Ausgaben“ über „📄 Export“ – erzeugt eine Excel-Datei
+  (.xlsx mit 3 Blättern: Ausgaben, Zahlungsverlauf, Salden) oder ein PDF,
+  wahlweise mit Zeitraum (von/bis).
 - **Diagramme & Statistiken:** Das Dashboard zeigt ein konfigurierbares Ausgaben-Diagramm (nach Person, Kategorie oder Monat, mit Zeitraum), ein Salden-Diagramm (wer ist im Plus/Minus) und Statistik-Kacheln (z. B. Ø pro Monat, Summe für Kaffee oder Milch). Der Team-Inhaber kann über „⚙️ Anpassen“ wählen, welche Kennzahlen und Kategorien angezeigt werden.
 - **Mitglied verlässt das Team:** Admin entfernt es; ein offener Restbetrag kann auf die anderen verteilt werden – auch prozentual unterschiedlich.
 - **Neue Mitglieder** starten ab ihrem Beitrittsdatum und sind von älteren Ausgaben nicht betroffen.

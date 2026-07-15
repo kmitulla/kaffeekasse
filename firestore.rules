@@ -58,13 +58,27 @@ service cloud.firestore {
       allow get: if signedIn() && (request.auth.uid == uid || isMaster());
       allow list: if isMaster();
       // Neue Konten starten IMMER als "nicht freigeschaltet".
-      allow create: if signedIn() && request.auth.uid == uid
-        && (request.resource.data.approved == false || isMaster());
+      // Der Master darf Konten (Profile) auch direkt anlegen.
+      allow create: if isMaster()
+        || (signedIn() && request.auth.uid == uid
+            && request.resource.data.approved == false);
       // Nur der Master darf das Feld 'approved' aendern.
       allow update: if isMaster()
         || (signedIn() && request.auth.uid == uid
             && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved']));
       allow delete: if isMaster();
+    }
+
+    // ---------- Passwort-vergessen-Anfragen ----------
+    // Darf ohne Anmeldung erstellt werden (die Person kommt ja nicht rein).
+    // Nur der Master kann die Anfragen sehen und freigeben.
+    match /pwResets/{resetId} {
+      allow create: if request.resource.data.keys().hasOnly(['email', 'requestedAt', 'status'])
+        && request.resource.data.status == 'open'
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 4
+        && request.resource.data.email.size() < 200;
+      allow read, update, delete: if isMaster();
     }
 
     // ---------- Teams ----------
