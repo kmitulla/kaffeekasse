@@ -24,14 +24,14 @@
 
   <!-- ===================== Lade-Ansicht ===================== -->
   <div id="view-loading" class="fullscreen-center">
-    <div class="app-logo pulse">☕️</div>
+    <div class="app-logo pulse"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 9h11.5v5.5a4.5 4.5 0 0 1-4.5 4.5H9a4.5 4.5 0 0 1-4.5-4.5V9z"/><path d="M16 10.2h1.4a2.65 2.65 0 0 1 0 5.3H16"/><path d="M8 6c-.7-.9.7-1.6 0-2.7M11.8 6c-.7-.9.7-1.6 0-2.7"/></svg></div>
     <p class="muted">Kaffeekasse wird geladen …</p>
   </div>
 
   <!-- ===================== Login / Registrierung ===================== -->
   <div id="view-auth" class="fullscreen-center hidden">
     <div class="glass-card auth-card">
-      <div class="app-logo">☕️</div>
+      <div class="app-logo"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 9h11.5v5.5a4.5 4.5 0 0 1-4.5 4.5H9a4.5 4.5 0 0 1-4.5-4.5V9z"/><path d="M16 10.2h1.4a2.65 2.65 0 0 1 0 5.3H16"/><path d="M8 6c-.7-.9.7-1.6 0-2.7M11.8 6c-.7-.9.7-1.6 0-2.7"/></svg></div>
       <h1 class="auth-title">Kaffeekasse</h1>
       <p class="muted auth-sub">Ausgaben im Team fair teilen</p>
 
@@ -63,7 +63,7 @@
   <!-- ===================== Warten auf Freischaltung ===================== -->
   <div id="view-pending" class="fullscreen-center hidden">
     <div class="glass-card auth-card">
-      <div class="app-logo">⏳</div>
+      <div class="app-logo"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.3V12l3 2.1"/></svg></div>
       <h1 class="auth-title">Fast geschafft!</h1>
       <p class="muted auth-sub">Dein Konto wurde erstellt und wartet jetzt auf die
         Freischaltung durch den Verwalter.<br><br>
@@ -77,7 +77,7 @@
   <!-- ===================== Team wählen / erstellen ===================== -->
   <div id="view-noteam" class="fullscreen-center hidden">
     <div class="glass-card auth-card">
-      <div class="app-logo">☕️</div>
+      <div class="app-logo"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 9h11.5v5.5a4.5 4.5 0 0 1-4.5 4.5H9a4.5 4.5 0 0 1-4.5-4.5V9z"/><path d="M16 10.2h1.4a2.65 2.65 0 0 1 0 5.3H16"/><path d="M8 6c-.7-.9.7-1.6 0-2.7M11.8 6c-.7-.9.7-1.6 0-2.7"/></svg></div>
       <h1 class="auth-title">Willkommen!</h1>
       <p class="muted auth-sub" id="noteam-sub">Tritt mit einem Einladungscode einem Team bei.</p>
       <div class="stack">
@@ -94,7 +94,7 @@
           <input type="text" id="join-code" placeholder="z. B. K7F3QX" autocapitalize="characters">
         </div>
         <button class="btn btn-secondary" id="btn-join-team">Team beitreten</button>
-        <button class="btn btn-secondary hidden" id="noteam-master">🔑 Benutzerverwaltung</button>
+        <button class="btn btn-secondary hidden" id="noteam-master"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.7 2.7M13.3 9.7l2 2"/></svg> Benutzerverwaltung</button>
         <p id="noteam-error" class="error-text hidden"></p>
         <button type="button" class="btn-link hidden" id="noteam-back">Zurück zur App</button>
         <button type="button" class="btn-link" id="noteam-signout">Abmelden</button>
@@ -126,7 +126,7 @@
         <h2 class="page-title">Übersicht</h2>
 
         <div class="list-item tappable hidden" id="master-card" style="margin-bottom:14px">
-          <div class="item-icon">🔑</div>
+          <div class="item-icon warn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.7 2.7M13.3 9.7l2 2"/></svg></div>
           <div class="item-main">
             <div class="item-title">Benutzerverwaltung</div>
             <div class="item-sub" id="master-card-sub">Konten freischalten</div>
@@ -178,7 +178,7 @@
 
         <div class="section-head">
           <h3 class="section-title">Statistiken</h3>
-          <button class="icon-btn hidden" id="btn-stats-config" title="Statistiken konfigurieren">⚙️ Anpassen</button>
+          <button class="icon-btn hidden" id="btn-stats-config" title="Statistiken konfigurieren"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px"><circle cx="12" cy="12" r="3.1"/><path d="M12 3.6v2.2M12 18.2v2.2M3.6 12h2.2M18.2 12h2.2M6.1 6.1l1.5 1.5M16.4 16.4l1.5 1.5M17.9 6.1l-1.5 1.5M7.6 16.4l-1.5 1.5"/></svg> Anpassen</button>
         </div>
         <div class="stats-grid" id="stats-grid"></div>
       </section>
@@ -187,7 +187,7 @@
       <section id="tab-expenses" class="tab-page hidden">
         <div class="section-head">
           <h2 class="page-title">Ausgaben</h2>
-          <button class="icon-btn" id="btn-export">📄 Export</button>
+          <button class="icon-btn" id="btn-export"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px"><path d="M12 4v10.5M8 11l4 4 4-4"/><path d="M5 19.5h14"/></svg> Export</button>
         </div>
         <div class="stack-list" id="expense-list"></div>
       </section>

@@ -10,6 +10,7 @@ import {
   secondaryCreateUser
 } from "./firebase.js";
 import { makeXlsx, makePdf, download } from "./export.js";
+import { icon } from "./icons.js";
 import {
   formatCents, parseEuro, splitByPercent, equalPercents,
   computeBalances, simplifyDebts
@@ -91,15 +92,34 @@ function fmtDateTime(ts) {
 
 // Kategorien für Diagramme & Statistiken (aus dem Titel erkannt)
 const CATEGORIES = [
-  { key: "kaffee", label: "Kaffee", emoji: "☕️", re: /(kaffee|espresso|bohne|coffee)/ },
-  { key: "milch", label: "Milch", emoji: "🥛", re: /(milch|hafer|oat)/ },
-  { key: "zucker", label: "Zucker", emoji: "🍬", re: /(zucker|süßstoff|sirup)/ },
-  { key: "tee", label: "Tee", emoji: "🍵", re: /tee/ },
-  { key: "wasser", label: "Wasser", emoji: "💧", re: /(wasser|sprudel)/ },
-  { key: "suesses", label: "Süßes & Gebäck", emoji: "🍰", re: /(kuchen|geb(ä|a)ck|keks|donut|croissant|schoko|süß|eis)/ },
-  { key: "zubehoer", label: "Zubehör", emoji: "🧰", re: /(filter|becher|tasse|maschine|entkalker|reinig|löffel)/ }
+  { key: "kaffee", label: "Kaffee", icon: "coffee", re: /(kaffee|espresso|bohne|coffee)/ },
+  { key: "milch", label: "Milch", icon: "milk", re: /(milch|hafer|oat)/ },
+  { key: "zucker", label: "Zucker", icon: "sugar", re: /(zucker|süßstoff|sirup)/ },
+  { key: "tee", label: "Tee", icon: "tea", re: /tee/ },
+  { key: "wasser", label: "Wasser", icon: "water", re: /(wasser|sprudel)/ },
+  { key: "suesses", label: "Süßes & Gebäck", icon: "cake", re: /(kuchen|geb(ä|a)ck|keks|donut|croissant|schoko|süß|eis)/ },
+  { key: "zubehoer", label: "Zubehör", icon: "box", re: /(filter|becher|tasse|maschine|entkalker|reinig|löffel)/ }
 ];
-const CAT_OTHER = { key: "sonstiges", label: "Sonstiges", emoji: "🛒" };
+const CAT_OTHER = { key: "sonstiges", label: "Sonstiges", icon: "cart" };
+
+// Schutz gegen Doppelklick: sperrt einen Button sofort; erst nach
+// kurzer Zeit wieder frei (falls der Dialog offen bleibt).
+function lockOnce(btn) {
+  if (!btn || btn.dataset.lock) return false;
+  btn.dataset.lock = "1";
+  btn.disabled = true;
+  setTimeout(() => { delete btn.dataset.lock; btn.disabled = false; }, 3000);
+  return true;
+}
+
+// Firestore-Schreibvorgänge NICHT abwarten: bei schlechter Verbindung
+// hängt das Promise, lokal ist die Änderung aber sofort da (Offline-Cache).
+function fireWrite(promise, errMsg) {
+  promise.catch(err => {
+    console.error(err);
+    toast(errMsg || "Speichern fehlgeschlagen – bitte prüfen.");
+  });
+}
 function categoryFor(title) {
   const t = (title || "").toLowerCase();
   return CATEGORIES.find(c => c.re.test(t)) || CAT_OTHER;
@@ -122,17 +142,9 @@ document.addEventListener("click", (e) => {
   }
 });
 
-function emojiFor(title) {
-  const t = (title || "").toLowerCase();
-  if (/(kaffee|espresso|bohne|coffee)/.test(t)) return "☕️";
-  if (/milch/.test(t)) return "🥛";
-  if (/zucker|süßstoff/.test(t)) return "🍬";
-  if (/wasser|sprudel/.test(t)) return "💧";
-  if (/tee/.test(t)) return "🍵";
-  if (/kuchen|geb(ä|a)ck|keks|donut|croissant/.test(t)) return "🍰";
-  if (/filter|becher|tasse|maschine|entkalker|reinig/.test(t)) return "🧰";
-  if (/verrechnung/.test(t)) return "⚖️";
-  return "🛒";
+function iconFor(title) {
+  if (/verrechnung/i.test(title || "")) return "scale";
+  return categoryFor(title).icon;
 }
 function initials(name) {
   return (name || "?").trim().split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase() || "?";
@@ -318,7 +330,7 @@ function renderMasterUI() {
   $("master-card-badge").classList.toggle("hidden", n === 0);
   $("master-card-badge").textContent = n;
   $("noteam-master").textContent = n
-    ? `🔑 Benutzerverwaltung (${n} offen)` : "🔑 Benutzerverwaltung";
+    ? `Benutzerverwaltung (${n} offen)` : "Benutzerverwaltung";
   // Offene Liste live aktualisieren
   if ($("ua-list")) renderUserAdminList();
 }
@@ -331,9 +343,9 @@ function userStatus(u) {
   return u.blockedAt ? "gesperrt" : "wartet";
 }
 const UA_STATUS = {
-  wartet: { icon: "⏳", label: "Wartet auf Freischaltung", order: 0 },
-  gesperrt: { icon: "⛔️", label: "Gesperrt", order: 1 },
-  aktiv: { icon: "✅", label: "Freigeschaltet", order: 2 }
+  wartet: { icon: "clock", cls: "warn", label: "Wartet auf Freischaltung", order: 0 },
+  gesperrt: { icon: "ban", cls: "bad", label: "Gesperrt", order: 1 },
+  aktiv: { icon: "check", cls: "ok", label: "Freigeschaltet", order: 2 }
 };
 const uaState = { search: "", filter: "alle" };
 
@@ -379,11 +391,11 @@ function renderUserAdminList() {
   const resetsBox = $("ua-resets");
   const resets = openResets();
   resetsBox.innerHTML = resets.length ? `
-    <h3 class="section-title" style="margin-top:0">🔒 Passwort-Anfragen</h3>
+    <h3 class="section-title" style="margin-top:0">Passwort-Anfragen</h3>
     <div class="stack-list" style="margin-bottom:14px">
       ${resets.map(r => `
         <div class="list-item compact">
-          <div class="item-icon">🔒</div>
+          <div class="item-icon">${icon("lock", 18)}</div>
           <div class="item-main">
             <div class="item-title">${esc(r.email)}</div>
             <div class="item-sub">Angefragt: ${esc(fmtDateTime(r.requestedAt) || "–")}</div>
@@ -401,7 +413,7 @@ function renderUserAdminList() {
       try {
         await sendPasswordResetEmail(auth, r.email);
         await updateDoc(doc(db, "pwResets", r.id), { status: "done", doneAt: serverTimestamp() });
-        toast(`Zurücksetzungs-E-Mail an ${r.email} gesendet ✅`);
+        toast(`Zurücksetzungs-E-Mail an ${r.email} gesendet.`);
       } catch (err) {
         console.error(err);
         toast("E-Mail konnte nicht gesendet werden.");
@@ -432,7 +444,7 @@ function renderUserAdminList() {
     ].filter(Boolean).join("<br>");
     return `
       <div class="list-item compact tappable" data-detail="${esc(u.uid)}">
-        <div class="item-icon">${st.icon}</div>
+        <div class="item-icon ${st.cls}">${icon(st.icon, 18)}</div>
         <div class="item-main">
           <div class="item-title">${esc(u.name || "Ohne Name")}</div>
           <div class="item-sub">${lines}</div>
@@ -451,7 +463,7 @@ function renderUserAdminList() {
       await updateDoc(doc(db, "users", b.dataset.approve), {
         approved: true, approvedAt: serverTimestamp()
       });
-      toast("Konto freigeschaltet ✅");
+      toast("Konto freigeschaltet.");
     }));
   box.querySelectorAll("[data-block]").forEach(b =>
     b.addEventListener("click", async (e) => {
@@ -499,13 +511,13 @@ async function openUserDetailModal(uid) {
 
   const st = UA_STATUS[userStatus(u)];
   openModal(`
-    <h3 class="modal-title">${st.icon} ${esc(u.name || "Ohne Name")}</h3>
+    <h3 class="modal-title">${esc(u.name || "Ohne Name")}</h3>
     <p class="muted small" style="margin-bottom:12px">${esc(u.email || "")} · ${st.label}</p>
     <div class="stack">
       <h3 class="section-title" style="margin-top:0">Teams</h3>
       ${userTeams.length ? userTeams.map(t => `
         <div class="list-item compact">
-          <div class="item-icon">${t.member?.active === false ? "🚪" : "👥"}</div>
+          <div class="item-icon">${t.member?.active === false ? icon("personOut") : icon("people")}</div>
           <div class="item-main">
             <div class="item-title">${esc(t.name)}</div>
             <div class="item-sub">${t.member ? (t.member.active === false ? "Entfernt" : ROLE_LABEL[t.member.role] || t.member.role) : "Kein Mitgliedseintrag"}</div>
@@ -542,7 +554,7 @@ async function openUserDetailModal(uid) {
   $("ud-pwreset").addEventListener("click", async () => {
     try {
       await sendPasswordResetEmail(auth, u.email);
-      toast(`Zurücksetzungs-E-Mail an ${u.email} gesendet ✅`);
+      toast(`Zurücksetzungs-E-Mail an ${u.email} gesendet.`);
     } catch (err) {
       console.error(err);
       toast("E-Mail konnte nicht gesendet werden.");
@@ -551,7 +563,7 @@ async function openUserDetailModal(uid) {
   $("modal-box").querySelectorAll("[data-role-team]").forEach(sel =>
     sel.addEventListener("change", async () => {
       await updateDoc(doc(db, "teams", sel.dataset.roleTeam, "members", uid), { role: sel.value });
-      toast("Rolle geändert ✅");
+      toast("Rolle geändert.");
     }));
   $("modal-box").querySelectorAll("[data-rmteam]").forEach(b =>
     b.addEventListener("click", async () => {
@@ -572,7 +584,7 @@ async function openUserDetailModal(uid) {
       joinedAt: serverTimestamp(), startDate: todayStr()
     });
     await updateDoc(doc(db, "users", uid), { teams: arrayUnion(tid) });
-    toast("Zum Team hinzugefügt ✅");
+    toast("Zum Team hinzugefügt.");
     openUserDetailModal(uid);
   });
 }
@@ -651,9 +663,9 @@ function openCreateUserModal() {
       }
       if (!pass) {
         await sendPasswordResetEmail(auth, email);
-        toast(`Konto angelegt – ${email} bekommt eine E-Mail zum Passwort-Festlegen ✅`);
+        toast(`Konto angelegt – ${email} bekommt eine E-Mail zum Passwort-Festlegen.`);
       } else {
-        toast("Konto angelegt und freigeschaltet ✅");
+        toast("Konto angelegt und freigeschaltet.");
       }
       openUserAdminModal();
     } catch (err) {
@@ -798,7 +810,7 @@ $("btn-create-team").addEventListener("click", async () => {
   if (!name) { errEl.textContent = "Bitte einen Teamnamen eingeben."; errEl.classList.remove("hidden"); return; }
   try {
     await createTeam(name);
-    toast("Team erstellt! 🎉");
+    toast("Team erstellt!");
   } catch (err) {
     console.error(err);
     errEl.textContent = "Team konnte nicht erstellt werden.";
@@ -813,7 +825,7 @@ $("btn-join-team").addEventListener("click", async () => {
   if (code.length < 4) { errEl.textContent = "Bitte einen gültigen Code eingeben."; errEl.classList.remove("hidden"); return; }
   try {
     await joinTeam(code);
-    toast("Willkommen im Team! 🎉");
+    toast("Willkommen im Team!");
   } catch (err) {
     console.error(err);
     errEl.textContent = err.message || "Beitritt fehlgeschlagen.";
@@ -920,7 +932,7 @@ function expenseSubline(e) {
 function expenseItemHTML(e) {
   return `
     <div class="list-item tappable" data-eid="${esc(e.id)}">
-      <div class="item-icon">${emojiFor(e.title)}</div>
+      <div class="item-icon">${icon(iconFor(e.title))}</div>
       <div class="item-main">
         <div class="item-title">${esc(e.title)}</div>
         <div class="item-sub">${esc(expenseSubline(e))}</div>
@@ -938,14 +950,14 @@ function renderDashboard() {
   el.classList.toggle("positive", my > 0);
   el.classList.toggle("negative", my < 0);
   $("my-balance-hint").textContent =
-    my > 0 ? "Du bekommst noch Geld 🙂" : my < 0 ? "Du schuldest noch Geld" : "Alles ausgeglichen ✨";
+    my > 0 ? "Du bekommst noch Geld" : my < 0 ? "Du schuldest noch Geld" : "Alles ausgeglichen";
 
   // Offene Zahlungen, die auf MEINE Bestätigung warten
   const toConfirm = state.settlements.filter(s => s.status === "pending" && s.to === uid);
   $("pending-confirm-section").classList.toggle("hidden", toConfirm.length === 0);
   $("pending-confirm-list").innerHTML = toConfirm.map(s => `
     <div class="list-item">
-      <div class="item-icon">💶</div>
+      <div class="item-icon">${icon("banknote")}</div>
       <div class="item-main">
         <div class="item-title">${esc(memberNameReal(s.from))} hat dir ${formatCents(s.amount)} gezahlt</div>
         <div class="item-sub">Bestätige, sobald das Geld da ist</div>
@@ -964,7 +976,7 @@ function renderDashboard() {
       const pend = myPending.find(p => p.to === d.to);
       html += `
         <div class="list-item">
-          <div class="item-icon">💸</div>
+          <div class="item-icon warn">${icon("send")}</div>
           <div class="item-main">
             <div class="item-title">Du → ${esc(memberNameReal(d.to))}</div>
             <div class="item-sub">${pend ? "Als bezahlt gemeldet – wartet auf Bestätigung" : "Offen"}</div>
@@ -979,19 +991,19 @@ function renderDashboard() {
     } else {
       html += `
         <div class="list-item">
-          <div class="item-icon">🪙</div>
+          <div class="item-icon ok">${icon("receive")}</div>
           <div class="item-main">
             <div class="item-title">${esc(memberNameReal(d.from))} → Du</div>
             <div class="item-sub">Offen</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <span class="item-amount positive">${formatCents(d.amount)}</span>
-            <button class="btn btn-small btn-secondary" data-received="${esc(d.from)}" data-amount="${d.amount}">Erhalten ✓</button>
+            <button class="btn btn-small btn-secondary" data-received="${esc(d.from)}" data-amount="${d.amount}">Erhalten</button>
           </div>
         </div>`;
     }
   }
-  $("my-debts-list").innerHTML = html || `<div class="empty-note">Nichts offen – alles ausgeglichen 🎉</div>`;
+  $("my-debts-list").innerHTML = html || `<div class="empty-note">Nichts offen – alles ausgeglichen.</div>`;
   $("my-debts-list").querySelectorAll("[data-pay]").forEach(b =>
     b.addEventListener("click", () => openSettleModal("pay", b.dataset.pay, parseInt(b.dataset.amount, 10))));
   $("my-debts-list").querySelectorAll("[data-received]").forEach(b =>
@@ -1046,7 +1058,7 @@ function renderExpenseChart() {
     if (chartCfg.dim === "person") {
       key = e.paidBy; label = memberNameReal(e.paidBy);
     } else if (chartCfg.dim === "cat") {
-      const c = categoryFor(e.title); key = c.key; label = `${c.emoji} ${c.label}`;
+      const c = categoryFor(e.title); key = c.key; label = c.label;
     } else {
       key = e.date.slice(0, 7); label = `${e.date.slice(5, 7)}/${e.date.slice(0, 4)}`;
     }
@@ -1130,7 +1142,7 @@ function renderStats() {
   for (const catKey of cfg.cats || []) {
     const c = CATEGORIES.find(x => x.key === catKey) || CAT_OTHER;
     const sum = exps.filter(e => categoryFor(e.title).key === c.key).reduce((s, e) => s + e.amount, 0);
-    tiles.push({ label: `${c.emoji} ${c.label} (${pl})`, value: formatCents(sum) });
+    tiles.push({ label: `${c.label} (${pl})`, value: formatCents(sum) });
   }
   $("stats-grid").innerHTML = tiles.length
     ? tiles.map(t => `
@@ -1167,7 +1179,7 @@ $("btn-stats-config").addEventListener("click", () => {
         ${[...CATEGORIES, CAT_OTHER].map(c => `
           <div class="participant-row">
             <input type="checkbox" id="sc-c-${c.key}" ${cfg.cats?.includes(c.key) ? "checked" : ""}>
-            <label for="sc-c-${c.key}">${c.emoji} ${c.label}</label>
+            <label for="sc-c-${c.key}">${c.label}</label>
           </div>`).join("")}
       </div>
     </div>
@@ -1184,7 +1196,7 @@ $("btn-stats-config").addEventListener("click", () => {
     };
     await updateDoc(doc(db, "teams", state.teamId), { statsConfig: newCfg });
     closeModal();
-    toast("Statistiken gespeichert ✅");
+    toast("Statistiken gespeichert.");
   });
 });
 
@@ -1205,13 +1217,13 @@ function renderSettle() {
   $("settle-suggestions").innerHTML = debts.length
     ? debts.map(d => `
       <div class="list-item">
-        <div class="item-icon">${d.from === uid || d.to === uid ? "⭐️" : "🔁"}</div>
+        <div class="item-icon">${d.from === uid || d.to === uid ? icon("star") : icon("swap")}</div>
         <div class="item-main">
           <div class="item-title">${esc(memberName(d.from))} → ${esc(memberName(d.to))}</div>
         </div>
         <span class="item-amount">${formatCents(d.amount)}</span>
       </div>`).join("")
-    : `<div class="empty-note">Alle Salden sind ausgeglichen 🎉</div>`;
+    : `<div class="empty-note">Alle Salden sind ausgeglichen.</div>`;
 
   const rows = Object.entries(state.balances)
     .filter(([mUid, b]) => b !== 0 || state.members[mUid]?.active !== false)
@@ -1221,7 +1233,7 @@ function renderSettle() {
     const gone = m?.active === false;
     return `
       <div class="list-item">
-        <div class="item-icon">${gone ? "🚪" : "👤"}</div>
+        <div class="item-icon">${gone ? icon("personOut") : icon("person")}</div>
         <div class="item-main">
           <div class="item-title">${esc(memberNameReal(mUid))}${gone ? " (entfernt)" : ""}</div>
         </div>
@@ -1234,7 +1246,7 @@ function renderSettle() {
   $("settle-history").innerHTML = hist.length
     ? hist.map(s => `
       <div class="list-item ${admin ? "tappable" : ""}" data-sid="${esc(s.id)}">
-        <div class="item-icon">${s.status === "confirmed" ? "✅" : "⏳"}</div>
+        <div class="item-icon ${s.status === "confirmed" ? "ok" : "warn"}">${icon(s.status === "confirmed" ? "check" : "clock")}</div>
         <div class="item-main">
           <div class="item-title">${esc(memberName(s.from))} → ${esc(memberName(s.to))}
             <span class="badge ${s.status === "confirmed" ? "badge-confirmed" : "badge-pending"}">
@@ -1290,16 +1302,17 @@ function openSettlementAdminModal(id) {
     </div>`);
   wireMoneyInput($("sa-amount"));
   $("sa-cancel").addEventListener("click", closeModal);
-  $("sa-save").addEventListener("click", async () => {
+  $("sa-save").addEventListener("click", async (e) => {
     const cents = parseEuro($("sa-amount").value);
     if (!cents || cents <= 0) { toast("Bitte einen gültigen Betrag eingeben."); return; }
+    if (!lockOnce(e.currentTarget)) return;
     const status = $("sa-status").value;
     const updates = { amount: cents, status };
     if (status === "confirmed" && !s.confirmedAt) updates.confirmedAt = serverTimestamp();
     if (status === "pending") updates.confirmedAt = null;
     await updateDoc(doc(db, "teams", state.teamId, "settlements", id), updates);
     closeModal();
-    toast("Zahlung aktualisiert ✅");
+    toast("Zahlung aktualisiert.");
   });
   $("sa-delete").addEventListener("click", async () => {
     if (!confirm("Diese Zahlung wirklich löschen? Die Beträge gelten dann wieder als offen.")) return;
@@ -1309,11 +1322,17 @@ function openSettlementAdminModal(id) {
   });
 }
 
-async function confirmSettlement(id) {
-  await updateDoc(doc(db, "teams", state.teamId, "settlements", id), {
+const confirmingIds = new Set();
+function confirmSettlement(id) {
+  const s = state.settlements.find(x => x.id === id);
+  // Schutz: nur offene Zahlungen, und jede nur ein einziges Mal
+  if (!s || s.status !== "pending" || confirmingIds.has(id)) return;
+  confirmingIds.add(id);
+  setTimeout(() => confirmingIds.delete(id), 5000);
+  fireWrite(updateDoc(doc(db, "teams", state.teamId, "settlements", id), {
     status: "confirmed", confirmedAt: serverTimestamp()
-  });
-  toast("Zahlung bestätigt ✅");
+  }), "Bestätigen fehlgeschlagen.");
+  toast("Zahlung bestätigt.");
 }
 
 // Ausgleich melden/bestätigen (mit anpassbarem Betrag)
@@ -1338,16 +1357,29 @@ function openSettleModal(kind, otherUid, suggested) {
     </div>`);
   wireMoneyInput($("settle-amount"));
   $("settle-cancel").addEventListener("click", closeModal);
-  $("settle-ok").addEventListener("click", async () => {
+  $("settle-ok").addEventListener("click", (e) => {
     const cents = parseEuro($("settle-amount").value);
     if (!cents || cents <= 0) { toast("Bitte einen gültigen Betrag eingeben."); return; }
     const uid = state.user.uid;
+    // Schutz 1: Button sperrt sich sofort (kein Mehrfach-Klick möglich)
+    if (!lockOnce(e.currentTarget)) return;
+    // Schutz 2: Gibt es bereits eine offene Meldung an diese Person,
+    // wird KEINE zweite erzeugt.
+    if (kind === "pay" && state.settlements.some(s =>
+        s.status === "pending" && s.from === uid && s.to === otherUid)) {
+      closeModal();
+      toast("Es gibt bereits eine offene Meldung an diese Person.");
+      return;
+    }
     const data = kind === "pay"
       ? { from: uid, to: otherUid, amount: cents, status: "pending", createdBy: uid, createdAt: serverTimestamp() }
       : { from: otherUid, to: uid, amount: cents, status: "confirmed", createdBy: uid, createdAt: serverTimestamp(), confirmedAt: serverTimestamp() };
-    await addDoc(collection(db, "teams", state.teamId, "settlements"), data);
+    // Schutz 3: nicht auf den Server warten – die Änderung ist lokal
+    // sofort da und wird im Hintergrund synchronisiert. So gibt es
+    // kein "Hängen", während dessen man mehrfach drücken könnte.
+    fireWrite(addDoc(collection(db, "teams", state.teamId, "settlements"), data), "Melden fehlgeschlagen.");
     closeModal();
-    toast(kind === "pay" ? "Gemeldet – wartet auf Bestätigung ⏳" : "Zahlung verbucht ✅");
+    toast(kind === "pay" ? "Gemeldet – wartet auf Bestätigung." : "Zahlung verbucht.");
   });
 }
 
@@ -1367,7 +1399,7 @@ function renderTeam() {
     const inactive = m.active === false;
     return `
       <div class="list-item ${admin || m.uid === state.user.uid ? "tappable" : ""}" data-member="${esc(m.uid)}">
-        <div class="item-icon">${inactive ? "🚪" : "👤"}</div>
+        <div class="item-icon">${inactive ? icon("personOut") : icon("person")}</div>
         <div class="item-main">
           <div class="item-title">${esc(m.name)}${m.uid === state.user.uid ? " (du)" : ""}
             <span class="badge ${ROLE_BADGE[m.role] || "badge-user"}">${ROLE_LABEL[m.role] || m.role}</span>
@@ -1390,7 +1422,7 @@ function renderTeam() {
       const names = Object.keys(p.shares || {}).map(memberNameReal).join(", ");
       return `
         <div class="list-item ${admin ? "tappable" : ""}" data-preset="${esc(p.id)}">
-          <div class="item-icon">👥</div>
+          <div class="item-icon">${icon("people")}</div>
           <div class="item-main">
             <div class="item-title">${esc(p.name)}</div>
             <div class="item-sub">${esc(names)}</div>
@@ -1407,7 +1439,7 @@ function renderTeam() {
 $("btn-copy-code").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(state.teamId);
-    toast("Code kopiert 📋");
+    toast("Code kopiert.");
   } catch {
     toast("Code: " + state.teamId);
   }
@@ -1479,7 +1511,7 @@ function wirePicker(pickId) {
     let sum = 0;
     uids.forEach(u => { sum += parseFloat($(pickId).querySelector(`[data-pct="${u}"]`).value || "0"); });
     sum = Math.round(sum * 100) / 100;
-    sumEl.textContent = `Summe: ${sum} %` + (Math.abs(sum - 100) < 0.01 ? " ✓" : " (muss 100 % sein)");
+    sumEl.textContent = `Summe: ${sum} %` + (Math.abs(sum - 100) < 0.01 ? " – passt" : " (muss 100 % sein)");
     sumEl.classList.toggle("ok", Math.abs(sum - 100) < 0.01);
     sumEl.classList.toggle("bad", Math.abs(sum - 100) >= 0.01);
   }
@@ -1564,8 +1596,8 @@ $("btn-export").addEventListener("click", () => {
       </div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-primary" id="ex-xlsx">📊 Excel (.xlsx)</button>
-      <button class="btn btn-primary" id="ex-pdf">📄 PDF</button>
+      <button class="btn btn-primary" id="ex-xlsx">${icon("table", 17)} Excel</button>
+      <button class="btn btn-primary" id="ex-pdf">${icon("download", 17)} PDF</button>
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="ex-cancel">Abbrechen</button>
@@ -1637,7 +1669,7 @@ function runExport(format) {
       download(blob, `Kaffeekasse_${stamp}.pdf`);
     }
     closeModal();
-    toast("Export erstellt 📁");
+    toast("Export erstellt.");
   } catch (err) {
     console.error(err);
     toast("Export fehlgeschlagen.");
@@ -1706,7 +1738,7 @@ function openExpenseModal(expenseId) {
   }
 
   if (canEdit) {
-    $("exp-save").addEventListener("click", async () => {
+    $("exp-save").addEventListener("click", (e) => {
       const title = $("exp-title").value.trim();
       const amount = parseEuro($("exp-amount").value);
       const date = $("exp-date").value;
@@ -1716,16 +1748,17 @@ function openExpenseModal(expenseId) {
       if (!date) { toast("Bitte ein Datum wählen."); return; }
       const shares = picker.getShares();
       if (!shares) return;
+      if (!lockOnce(e.currentTarget)) return;
 
       const data = { type: "expense", title, amount, date, paidBy, shares };
       if (existing) {
-        await updateDoc(doc(db, "teams", state.teamId, "expenses", expenseId), data);
-        toast("Ausgabe aktualisiert ✅");
+        fireWrite(updateDoc(doc(db, "teams", state.teamId, "expenses", expenseId), data));
+        toast("Ausgabe aktualisiert.");
       } else {
-        await addDoc(collection(db, "teams", state.teamId, "expenses"), {
+        fireWrite(addDoc(collection(db, "teams", state.teamId, "expenses"), {
           ...data, createdBy: state.user.uid, createdAt: serverTimestamp()
-        });
-        toast("Ausgabe gespeichert ✅");
+        }));
+        toast("Ausgabe gespeichert.");
       }
       closeModal();
     });
@@ -1792,18 +1825,19 @@ function openPresetModal(presetId) {
   `);
   const picker = wirePicker("preset-pick");
   $("preset-cancel").addEventListener("click", closeModal);
-  $("preset-save").addEventListener("click", async () => {
+  $("preset-save").addEventListener("click", async (e) => {
     const name = $("preset-name").value.trim();
     if (!name) { toast("Bitte einen Namen eingeben."); return; }
     const shares = picker.getShares();
     if (!shares) return;
+    if (!lockOnce(e.currentTarget)) return;
     if (existing) {
       await updateDoc(doc(db, "teams", state.teamId, "presets", presetId), { name, shares });
     } else {
       await addDoc(collection(db, "teams", state.teamId, "presets"), { name, shares });
     }
     closeModal();
-    toast("Gruppe gespeichert ✅");
+    toast("Gruppe gespeichert.");
   });
   if (existing) {
     $("preset-delete").addEventListener("click", async () => {
@@ -1882,7 +1916,7 @@ function openMemberModal(uid) {
     if (canEditStart && $("member-start")) updates.startDate = $("member-start").value;
     if (Object.keys(updates).length) {
       await updateDoc(doc(db, "teams", state.teamId, "members", uid), updates);
-      toast("Gespeichert ✅");
+      toast("Gespeichert.");
     }
     closeModal();
   });
@@ -1939,9 +1973,10 @@ function openRemoveMemberModal(uid) {
     </div>`);
   const picker = wirePicker("rm-pick");
   $("rm-cancel").addEventListener("click", closeModal);
-  $("rm-ok").addEventListener("click", async () => {
+  $("rm-ok").addEventListener("click", async (e) => {
     const shares = picker.getShares();
     if (!shares) return;
+    if (!lockOnce(e.currentTarget)) return;
     await addDoc(collection(db, "teams", state.teamId, "expenses"), {
       type: "adjustment",
       title: `Verrechnung: ${m.name} wurde entfernt`,
@@ -2024,7 +2059,7 @@ $("btn-team-switcher").addEventListener("click", async () => {
     <div class="stack-list">
       ${rows.map(r => `
         <div class="list-item tappable" data-team="${esc(r.id)}">
-          <div class="item-icon">${r.id === state.teamId ? "✅" : "👥"}</div>
+          <div class="item-icon">${r.id === state.teamId ? icon("check") : icon("people")}</div>
           <div class="item-main"><div class="item-title">${esc(r.name)}</div>
             <div class="item-sub">Code: ${esc(r.id)}</div></div>
         </div>`).join("")}
@@ -2080,7 +2115,7 @@ $("btn-profile").addEventListener("click", () => {
       await updateDoc(doc(db, "teams", state.teamId, "members", state.user.uid), { name });
     }
     closeModal();
-    toast("Name gespeichert ✅");
+    toast("Name gespeichert.");
   });
   $("profile-signout").addEventListener("click", () => { closeModal(); signOut(auth); });
 });

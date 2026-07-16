@@ -1,6 +1,6 @@
 // Service Worker – macht die App offline nutzbar (App-Hülle wird gecacht,
 // die Daten selbst cached Firestore separat).
-const CACHE = "kaffeekasse-v4";
+const CACHE = "kaffeekasse-v5";
 
 const APP_SHELL = [
   "./",
@@ -11,6 +11,7 @@ const APP_SHELL = [
   "./js/firebase-config.js",
   "./js/balance.js",
   "./js/export.js",
+  "./js/icons.js",
   "./manifest.webmanifest",
   "./icons/favicon.svg",
   "./icons/icon-192.png",
