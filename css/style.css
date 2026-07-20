@@ -177,6 +177,14 @@ a.btn { text-decoration: none; }
 }
 .qr-box svg { width: 190px; height: 190px; display: block; }
 
+/* ---------- Zahlungserinnerung auf dem Dashboard (hervorgehoben) ---------- */
+.reminder-item {
+  border: 1px solid rgba(231, 111, 81, 0.5);
+  background: rgba(231, 111, 81, 0.12);
+  box-shadow: 0 6px 18px rgba(231, 111, 81, 0.18);
+}
+.reminder-item .item-title { font-weight: 800; }
+
 .error-text { color: var(--red); font-size: 0.86rem; text-align: center; }
 
 .divider { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.8rem; margin: 4px 0; }

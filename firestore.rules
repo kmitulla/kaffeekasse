@@ -146,6 +146,18 @@ service cloud.firestore {
         allow create, update, delete: if isAdmin(teamId);
       }
 
+      // ---------- Zahlungserinnerungen (In-App) ----------
+      // Der Glaeubiger (from) erinnert den Schuldner (to). Loeschen darf
+      // der Glaeubiger (zuruecknehmen) oder der Schuldner (erledigt).
+      match /reminders/{reminderId} {
+        allow read: if isMember(teamId);
+        allow create, update: if isMember(teamId)
+          && request.resource.data.from == request.auth.uid;
+        allow delete: if isMember(teamId)
+          && (resource.data.from == request.auth.uid
+              || resource.data.to == request.auth.uid);
+      }
+
       // ---------- Ausgleichszahlungen ----------
       match /settlements/{settlementId} {
         allow read: if isMember(teamId);

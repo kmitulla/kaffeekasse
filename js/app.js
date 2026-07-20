@@ -34,6 +34,7 @@ const state = {
   expenses: [],
   settlements: [],
   presets: [],
+  reminders: [],
   balances: {},
   activeTab: "dashboard",
   teamUnsubs: [],
@@ -957,6 +958,7 @@ function cleanupTeam() {
   state.expenses = [];
   state.settlements = [];
   state.presets = [];
+  state.reminders = [];
 }
 
 function attachTeam(teamId) {
@@ -1018,6 +1020,13 @@ function attachTeam(teamId) {
     state.presets = list;
     renderAll();
   }, err => console.error("presets:", err)));
+
+  state.teamUnsubs.push(onSnapshot(collection(base, "reminders"), (snap) => {
+    const list = [];
+    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    state.reminders = list;
+    renderAll();
+  }, err => console.error("reminders:", err)));
 }
 
 // ---------------------------------------------------------
@@ -1064,6 +1073,28 @@ function renderDashboard() {
   $("my-balance-hint").textContent =
     my > 0 ? "Du bekommst noch Geld" : my < 0 ? "Du schuldest noch Geld" : "Alles ausgeglichen";
 
+  // Zahlungserinnerungen AN MICH – deutlich hervorgehoben. Nur zeigen,
+  // solange ich der Person tatsächlich noch etwas schulde.
+  const myReminders = state.reminders
+    .map(r => ({ ...r, owed: debtBetween(uid, r.from) }))
+    .filter(r => r.to === uid && r.owed > 0)
+    .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+  $("reminders-section").classList.toggle("hidden", myReminders.length === 0);
+  $("reminders-list").innerHTML = myReminders.map(r => `
+    <div class="list-item reminder-item">
+      <div class="item-icon warn">${icon("clock")}</div>
+      <div class="item-main">
+        <div class="item-title">${esc(memberNameReal(r.from))} erinnert dich an deine Zahlung</div>
+        <div class="item-sub">${esc(fmtDateTime(r.createdAt) || "gerade eben")}${r.count > 1 ? ` · ${r.count}× erinnert` : ""}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <span class="item-amount negative">${formatCents(r.owed)}</span>
+        <button class="btn btn-small btn-primary" data-remind-pay="${esc(r.from)}" data-amount="${r.owed}">Bezahlen</button>
+      </div>
+    </div>`).join("");
+  $("reminders-list").querySelectorAll("[data-remind-pay]").forEach(b =>
+    b.addEventListener("click", () => openSettleModal("pay", b.dataset.remindPay, parseInt(b.dataset.amount, 10))));
+
   // Offene Zahlungen, die auf MEINE Bestätigung warten
   const toConfirm = state.settlements.filter(s => s.status === "pending" && s.to === uid);
   $("pending-confirm-section").classList.toggle("hidden", toConfirm.length === 0);
@@ -1097,7 +1128,10 @@ function renderDashboard() {
             <span class="item-amount negative">${formatCents(d.amount)}</span>
             ${pend
               ? `<button class="btn btn-small btn-secondary" data-cancel="${esc(pend.id)}">Zurückziehen</button>`
-              : `<button class="btn btn-small btn-primary" data-pay="${esc(d.to)}" data-amount="${d.amount}">Ich habe bezahlt</button>`}
+              : `<div style="display:flex;gap:6px">
+                  <button class="btn btn-small btn-secondary" data-paid="${esc(d.to)}" data-amount="${d.amount}">Ich habe gezahlt</button>
+                  <button class="btn btn-small btn-primary" data-pay="${esc(d.to)}" data-amount="${d.amount}">Bezahlen</button>
+                </div>`}
           </div>
         </div>`;
     } else {
@@ -1121,6 +1155,8 @@ function renderDashboard() {
   $("my-debts-list").innerHTML = html || `<div class="empty-note">Nichts offen – alles ausgeglichen.</div>`;
   $("my-debts-list").querySelectorAll("[data-pay]").forEach(b =>
     b.addEventListener("click", () => openSettleModal("pay", b.dataset.pay, parseInt(b.dataset.amount, 10))));
+  $("my-debts-list").querySelectorAll("[data-paid]").forEach(b =>
+    b.addEventListener("click", () => openSettleModal("pay", b.dataset.paid, parseInt(b.dataset.amount, 10), { alreadyPaid: true })));
   $("my-debts-list").querySelectorAll("[data-received]").forEach(b =>
     b.addEventListener("click", () => openSettleModal("received", b.dataset.received, parseInt(b.dataset.amount, 10))));
   $("my-debts-list").querySelectorAll("[data-remind]").forEach(b =>
@@ -1506,14 +1542,18 @@ function confirmSettlement(id, amount) {
   toast("Zahlung bestätigt.");
 }
 
-// Ausgleich melden/bestätigen (mit anpassbarem Betrag)
-function openSettleModal(kind, otherUid, suggested) {
+// Ausgleich melden/bestätigen (mit anpassbarem Betrag).
+// opts.alreadyPaid = true -> nur melden "habe ich schon gezahlt"
+// (ohne Zahlungsoptionen wie PayPal/QR).
+function openSettleModal(kind, otherUid, suggested, opts = {}) {
+  const alreadyPaid = kind === "pay" && opts.alreadyPaid === true;
   const title = kind === "pay"
-    ? `Zahlung an ${memberNameReal(otherUid)} melden`
+    ? (alreadyPaid ? `An ${memberNameReal(otherUid)} bereits gezahlt` : `An ${memberNameReal(otherUid)} bezahlen`)
     : `Zahlung von ${memberNameReal(otherUid)} erhalten`;
-  // Hat der Empfänger Zahlungsoptionen hinterlegt? Dann direkt anbieten.
+  // Zahlungsoptionen nur beim aktiven "Bezahlen" anbieten – nicht,
+  // wenn nur nachträglich gemeldet wird ("Ich habe gezahlt").
   const payee = kind === "pay" ? (state.members[otherUid] || {}) : {};
-  const hasPayOpts = kind === "pay" && !!(payee.paypal || payee.iban);
+  const hasPayOpts = kind === "pay" && !alreadyPaid && !!(payee.paypal || payee.iban);
   openModal(`
     <h3 class="modal-title">${esc(title)}</h3>
     <div class="stack">
@@ -1637,9 +1677,20 @@ function openSettleModal(kind, otherUid, suggested) {
     // sofort da und wird im Hintergrund synchronisiert. So gibt es
     // kein "Hängen", während dessen man mehrfach drücken könnte.
     fireWrite(addDoc(collection(db, "teams", state.teamId, "settlements"), data), "Melden fehlgeschlagen.");
+    // Zahle ich (melde ich eine Zahlung), verschwindet eine offene
+    // In-App-Erinnerung dieser Person – sie soll nicht wieder auftauchen.
+    if (kind === "pay") clearReminder(otherUid, uid);
     closeModal();
     toast(kind === "pay" ? "Gemeldet – wartet auf Bestätigung." : "Zahlung verbucht.");
   });
+}
+
+// Erinnerung (Gläubiger `creditor` an Schuldner `debtor`) entfernen,
+// wenn vorhanden. Fehler werden ignoriert (evtl. schon weg).
+function clearReminder(creditor, debtor) {
+  const id = `${creditor}_${debtor}`;
+  if (!state.reminders.some(r => r.id === id)) return;
+  deleteDoc(doc(db, "teams", state.teamId, "reminders", id)).catch(() => {});
 }
 
 // Wie viel schuldet `from` aktuell an `to`? (aus den vorgeschlagenen
@@ -1776,14 +1827,24 @@ function openReminderModal(debtorUid, cents) {
       <button class="btn btn-primary" id="rem-share">Teilen / Senden</button>
     </div>
     <div class="modal-actions">
+      <button class="btn btn-secondary" id="rem-inapp">${icon("clock")} In der App erinnern</button>
+    </div>
+    <p class="muted small" style="text-align:center;margin-top:4px">„In der App erinnern“ zeigt
+      ${esc(memberNameReal(debtorUid))} die Erinnerung deutlich auf dem Dashboard an.</p>
+    <div class="modal-actions">
       <a class="btn btn-secondary" href="${esc(PAYPAL_REQUEST_URL)}" target="_blank" rel="noopener">${icon("banknote")} In PayPal anfordern</a>
     </div>
-    <p class="muted small" style="text-align:center;margin-top:8px">„In PayPal anfordern“ öffnet
+    <p class="muted small" style="text-align:center;margin-top:4px">„In PayPal anfordern“ öffnet
       PayPals Geld-anfordern-Seite – Person und Betrag wählst du dort aus.</p>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="rem-close">Schließen</button>
     </div>`);
   $("rem-close").addEventListener("click", closeModal);
+  $("rem-inapp").addEventListener("click", (e) => {
+    if (!lockOnce(e.currentTarget)) return;
+    sendInAppReminder(debtorUid, cents);
+    closeModal();
+  });
   const copyText = async () => {
     try { await navigator.clipboard.writeText($("rem-text").value); toast("Nachricht kopiert."); }
     catch { toast("Kopieren nicht möglich – bitte Text markieren und kopieren."); }
@@ -1799,6 +1860,23 @@ function openReminderModal(debtorUid, cents) {
       await copyText();
     }
   });
+}
+
+// In-App-Erinnerung: erscheint deutlich auf dem Dashboard des Schuldners.
+// Pro Gläubiger→Schuldner-Paar genau ein Eintrag – wiederholtes Erinnern
+// aktualisiert Zeit und Zähler, statt mehrere Einträge zu erzeugen.
+function sendInAppReminder(debtorUid, cents) {
+  const me = state.user.uid;
+  const id = `${me}_${debtorUid}`;
+  const existing = state.reminders.find(r => r.id === id);
+  fireWrite(setDoc(doc(db, "teams", state.teamId, "reminders", id), {
+    from: me,
+    to: debtorUid,
+    amount: cents,
+    createdAt: serverTimestamp(),
+    count: (existing?.count || 0) + 1
+  }), "Erinnerung fehlgeschlagen.");
+  toast("Erinnerung gesendet.");
 }
 
 // ---------- Team ----------
