@@ -60,6 +60,39 @@
     </div>
   </div>
 
+  <!-- ===================== Neues Passwort festlegen ===================== -->
+  <div id="view-reset" class="fullscreen-center hidden">
+    <div class="glass-card auth-card">
+      <div class="app-logo"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="10.5" width="13" height="9" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14v2"/></svg></div>
+      <h1 class="auth-title">Neues Passwort</h1>
+      <p class="muted auth-sub" id="reset-email-info">Link wird geprüft …</p>
+      <div class="stack hidden" id="reset-form">
+        <div class="field">
+          <label for="reset-pass1">Neues Passwort</label>
+          <input type="password" id="reset-pass1" placeholder="Mindestens 6 Zeichen" autocomplete="new-password">
+        </div>
+        <div class="field">
+          <label for="reset-pass2">Passwort wiederholen</label>
+          <input type="password" id="reset-pass2" autocomplete="new-password">
+        </div>
+        <p id="reset-error" class="error-text hidden"></p>
+        <button class="btn btn-primary" id="reset-submit">Passwort speichern</button>
+      </div>
+      <div class="stack hidden" id="reset-invalid">
+        <p class="error-text" id="reset-invalid-text"></p>
+        <div class="field hidden" id="reset-email-field">
+          <label for="reset-email-input">Deine E-Mail</label>
+          <input type="email" id="reset-email-input" placeholder="name@firma.de" autocomplete="email">
+        </div>
+        <button class="btn btn-secondary" id="reset-request-new">Neuen Link anfordern</button>
+      </div>
+      <div class="stack hidden" id="reset-done">
+        <p class="muted">Dein Passwort wurde geändert. Du kannst dich jetzt damit anmelden.</p>
+      </div>
+      <button type="button" class="btn-link" id="reset-back">Zur Anmeldung</button>
+    </div>
+  </div>
+
   <!-- ===================== Warten auf Freischaltung ===================== -->
   <div id="view-pending" class="fullscreen-center hidden">
     <div class="glass-card auth-card">

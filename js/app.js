@@ -4,7 +4,8 @@
 import {
   auth, db,
   onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  sendPasswordResetEmail, updateProfile, signOut,
+  sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset,
+  updateProfile, signOut,
   doc, collection, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, arrayUnion, arrayRemove,
   secondaryCreateUser
@@ -209,7 +210,7 @@ function setPending(key, val) {
 // Ansichten umschalten
 // ---------------------------------------------------------
 function showView(name) {
-  for (const v of ["view-loading", "view-auth", "view-pending", "view-noteam", "view-app"]) {
+  for (const v of ["view-loading", "view-auth", "view-reset", "view-pending", "view-noteam", "view-app"]) {
     $(v).classList.toggle("hidden", v !== `view-${name}`);
   }
 }
@@ -407,13 +408,19 @@ function renderUserAdminList() {
         </div>`).join("")}
     </div>` : "";
   resetsBox.querySelectorAll("[data-rok]").forEach(b =>
-    b.addEventListener("click", async () => {
+    b.addEventListener("click", async (e) => {
       const r = state.pwResets.find(x => x.id === b.dataset.rok);
-      if (!r) return;
+      if (!r || !lockOnce(e.currentTarget)) return;
       try {
+        // Nur EINE E-Mail senden – jede neue E-Mail macht ältere Links ungültig.
         await sendPasswordResetEmail(auth, r.email);
-        await updateDoc(doc(db, "pwResets", r.id), { status: "done", doneAt: serverTimestamp() });
-        toast(`Zurücksetzungs-E-Mail an ${r.email} gesendet.`);
+        // Alle offenen Anfragen dieser Person zusammen abhaken.
+        const same = state.pwResets.filter(x =>
+          x.status === "open" && x.email.toLowerCase() === r.email.toLowerCase());
+        for (const x of same) {
+          fireWrite(updateDoc(doc(db, "pwResets", x.id), { status: "done", doneAt: serverTimestamp() }));
+        }
+        toast(`Zurücksetzungs-E-Mail an ${r.email} gesendet. Nur der Link aus dieser (neuesten) E-Mail funktioniert.`);
       } catch (err) {
         console.error(err);
         toast("E-Mail konnte nicht gesendet werden.");
@@ -677,9 +684,94 @@ function openCreateUserModal() {
 }
 
 // ---------------------------------------------------------
+// Passwort über den Link aus der E-Mail neu festlegen.
+// (Firebase Console: Authentication > Templates > Aktions-URL auf die
+// App-Adresse stellen, dann öffnet der E-Mail-Link diese Seite.)
+// ---------------------------------------------------------
+const urlParams = new URLSearchParams(location.search);
+const resetOobCode = urlParams.get("mode") === "resetPassword" ? urlParams.get("oobCode") : null;
+let resetEmail = null;
+
+function resetErrorText(err) {
+  const c = err?.code || "";
+  if (c.includes("expired-action-code"))
+    return "Dieser Link ist abgelaufen. Wichtig: Ein Link gilt nur begrenzte Zeit, "
+      + "nur einmal – und es zählt immer die zuletzt gesendete E-Mail.";
+  if (c.includes("invalid-action-code"))
+    return "Dieser Link ist ungültig oder wurde bereits verwendet. "
+      + "Falls du mehrere E-Mails bekommen hast: Es funktioniert nur der Link aus der neuesten.";
+  if (c.includes("user-disabled") || c.includes("user-not-found"))
+    return "Zu diesem Link gibt es kein aktives Konto.";
+  return "Der Link konnte nicht geprüft werden. (" + c + ")";
+}
+
+async function initResetFlow() {
+  state.resetMode = true;
+  showView("reset");
+  try {
+    resetEmail = await verifyPasswordResetCode(auth, resetOobCode);
+    $("reset-email-info").textContent = "für " + resetEmail;
+    $("reset-form").classList.remove("hidden");
+  } catch (err) {
+    console.warn(err);
+    $("reset-email-info").textContent = "";
+    $("reset-invalid-text").textContent = resetErrorText(err);
+    $("reset-email-field").classList.remove("hidden");
+    $("reset-invalid").classList.remove("hidden");
+  }
+}
+
+$("reset-submit").addEventListener("click", async (e) => {
+  const p1 = $("reset-pass1").value;
+  const p2 = $("reset-pass2").value;
+  const errEl = $("reset-error");
+  errEl.classList.add("hidden");
+  const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove("hidden"); };
+  if (p1.length < 6) { fail("Das Passwort braucht mindestens 6 Zeichen."); return; }
+  if (p1 !== p2) { fail("Die Passwörter stimmen nicht überein."); return; }
+  if (!lockOnce(e.currentTarget)) return;
+  try {
+    await confirmPasswordReset(auth, resetOobCode, p1);
+    $("reset-form").classList.add("hidden");
+    $("reset-done").classList.remove("hidden");
+    toast("Passwort geändert.");
+  } catch (err) {
+    console.warn(err);
+    $("reset-form").classList.add("hidden");
+    $("reset-invalid-text").textContent = resetErrorText(err);
+    $("reset-email-field").classList.remove("hidden");
+    $("reset-invalid").classList.remove("hidden");
+  }
+});
+
+$("reset-request-new").addEventListener("click", async (e) => {
+  const email = resetEmail || $("reset-email-input").value.trim();
+  if (!email.includes("@")) { toast("Bitte deine E-Mail eintragen."); return; }
+  if (!lockOnce(e.currentTarget)) return;
+  try {
+    await addDoc(collection(db, "pwResets"), {
+      email, requestedAt: serverTimestamp(), status: "open"
+    });
+    toast("Der Verwalter wurde informiert und gibt die Zurücksetzung frei.");
+  } catch (err) {
+    console.error(err);
+    toast("Anfrage konnte nicht gesendet werden.");
+  }
+});
+
+$("reset-back").addEventListener("click", () => {
+  // Parameter aus der Adresse entfernen und die App normal starten
+  location.href = location.pathname;
+});
+
+if (resetOobCode) initResetFlow();
+
+// ---------------------------------------------------------
 // Start: Auth-Status beobachten
 // ---------------------------------------------------------
 onAuthStateChanged(auth, async (user) => {
+  // Während des Passwort-Zurücksetzens keine Ansicht wechseln
+  if (state.resetMode) return;
   cleanupTeam();
   if (state.profileUnsub) { state.profileUnsub(); state.profileUnsub = null; }
   if (state.usersUnsub) { state.usersUnsub(); state.usersUnsub = null; }

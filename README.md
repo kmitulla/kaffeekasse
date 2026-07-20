@@ -77,6 +77,24 @@ Nicht jeder, der die Seite findet, kann die App benutzen:
 - Das ist auch serverseitig über die Firestore-Regeln abgesichert, nicht nur
   in der App-Oberfläche.
 
+### Wichtig: Passwort-Link auf die App umleiten (einmalig)
+
+Damit der Link aus Passwort-E-Mails die **schöne Seite in der App** öffnet
+(mit klaren deutschen Hinweisen statt der Firebase-Standardseite):
+
+1. Firebase Console → **Authentication → Templates** (Vorlagen).
+2. Vorlage **„Passwort zurücksetzen“** öffnen → **Stift-Symbol** (Bearbeiten).
+3. Unten auf **„Aktions-URL anpassen“** klicken und eintragen:
+   `https://kmitulla.github.io/kaffeekasse/`
+4. **Speichern.** (Gilt automatisch für alle E-Mail-Vorlagen des Projekts.)
+
+Gut zu wissen zu den Links: Jeder Link ist **nur einmal** verwendbar, nur
+**begrenzte Zeit** gültig, und wenn mehrere E-Mails verschickt wurden, zählt
+**nur die neueste**. Die App zeigt in diesen Fällen jetzt eine verständliche
+Meldung und bietet direkt „Neuen Link anfordern“ an (geht wieder als Anfrage
+an den Master). Beim Freigeben mehrerer offener Anfragen derselben Person
+sendet die App bewusst nur eine E-Mail.
+
 ### Was der Master außerdem kann
 
 - **Nutzer direkt anlegen** (Name, E-Mail, wahlweise mit Passwort – ohne
