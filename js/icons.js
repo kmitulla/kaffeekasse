@@ -28,7 +28,8 @@ const PATHS = {
   swap: '<path d="M7 9.5h10l-3-3M17 14.5H7l3 3"/>',
   star: '<path d="M12 4.5l2.2 4.5 5 .8-3.6 3.5.8 5-4.4-2.4-4.4 2.4.8-5L4.8 9.8l5-.8L12 4.5z"/>',
   euro: '<circle cx="12" cy="12" r="8.5"/><path d="M15 9.3a3.9 3.9 0 1 0 0 5.4M8.3 11h4.5M8.3 13.2h4.5"/>',
-  plus: '<path d="M12 5.5v13M5.5 12h13"/>'
+  plus: '<path d="M12 5.5v13M5.5 12h13"/>',
+  qr: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><path d="M13.5 16.2h2.7M13.5 19.5h2.7M19.5 13.5v2.7M16.2 13.5h1M19.5 19.5h.01"/>'
 };
 
 export function icon(name, size = 22) {

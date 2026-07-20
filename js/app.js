@@ -17,6 +17,10 @@ import {
   computeBalances, simplifyDebts
 } from "./balance.js";
 import { MASTER_EMAIL } from "./firebase-config.js";
+import {
+  normalizePaypal, paypalMeLink, normalizeIban, formatIban, validIban,
+  epcQrData, qrSvg
+} from "./payment.js";
 
 // ---------------------------------------------------------
 // Zustand
@@ -1502,6 +1506,9 @@ function openSettleModal(kind, otherUid, suggested) {
   const title = kind === "pay"
     ? `Zahlung an ${memberNameReal(otherUid)} melden`
     : `Zahlung von ${memberNameReal(otherUid)} erhalten`;
+  // Hat der Empfänger Zahlungsoptionen hinterlegt? Dann direkt anbieten.
+  const payee = kind === "pay" ? (state.members[otherUid] || {}) : {};
+  const hasPayOpts = kind === "pay" && !!(payee.paypal || payee.iban);
   openModal(`
     <h3 class="modal-title">${esc(title)}</h3>
     <div class="stack">
@@ -1510,6 +1517,23 @@ function openSettleModal(kind, otherUid, suggested) {
         <input type="text" id="settle-amount" inputmode="decimal" value="${(suggested / 100).toFixed(2).replace(".", ",")}">
       </div>
       <p class="muted small" id="settle-extra-hint" style="display:none"></p>
+      ${hasPayOpts ? `
+      <div class="field">
+        <label>Direkt zahlen</label>
+        <div class="pay-options">
+          ${payee.paypal ? `<a class="btn btn-secondary" id="settle-paypal" href="${esc(paypalMeLink(payee.paypal, suggested))}" target="_blank" rel="noopener">${icon("banknote")} PayPal öffnen</a>` : ""}
+          ${payee.iban ? `<button type="button" class="btn btn-secondary" id="settle-qr-btn">${icon("qr")} Überweisungs-QR</button>` : ""}
+        </div>
+        <div id="settle-qr-wrap" class="hidden">
+          <div class="qr-box" id="settle-qr"></div>
+          <p class="muted small" style="text-align:center">Mit der Banking-App scannen – Empfänger,
+            IBAN, Betrag und Verwendungszweck sind schon ausgefüllt.</p>
+          <p class="muted small" style="text-align:center">${esc(formatIban(payee.iban || ""))}
+            <button type="button" class="btn btn-small btn-secondary" id="settle-iban-copy">IBAN kopieren</button></p>
+        </div>
+        <p class="muted small">Der Betrag oben wird automatisch übernommen. Danach unten
+          „Als bezahlt melden" drücken.</p>
+      </div>` : ""}
       <p class="muted small">${kind === "pay"
         ? "Der Empfänger muss die Zahlung anschließend bestätigen – erst dann gilt sie als ausgeglichen."
         : "Damit bestätigst du, dass du das Geld bereits erhalten hast."}</p>
@@ -1519,6 +1543,46 @@ function openSettleModal(kind, otherUid, suggested) {
       <button class="btn btn-primary" id="settle-ok">${kind === "pay" ? "Als bezahlt melden" : "Erhalt bestätigen"}</button>
     </div>`);
   wireMoneyInput($("settle-amount"));
+  if (hasPayOpts) {
+    const currentCents = () => parseEuro($("settle-amount").value) || 0;
+    // PayPal-Link folgt live dem eingegebenen Betrag
+    const ppLink = $("settle-paypal");
+    if (ppLink) {
+      $("settle-amount").addEventListener("input", () => {
+        ppLink.href = paypalMeLink(payee.paypal, currentCents());
+      });
+      ppLink.addEventListener("click", (ev) => {
+        if (currentCents() <= 0) { ev.preventDefault(); toast("Bitte zuerst einen gültigen Betrag eingeben."); }
+      });
+    }
+    // Girocode: beim Aufklappen (und bei Betragsänderung) neu erzeugen
+    const qrBtn = $("settle-qr-btn");
+    if (qrBtn) {
+      const renderQr = () => {
+        const cents = currentCents();
+        if (cents <= 0) { toast("Bitte zuerst einen gültigen Betrag eingeben."); return false; }
+        $("settle-qr").innerHTML = qrSvg(epcQrData({
+          name: payee.payName || payee.name || "",
+          iban: payee.iban,
+          cents,
+          remittance: `Kaffeekasse${state.team?.name ? " " + state.team.name : ""}`
+        }));
+        return true;
+      };
+      qrBtn.addEventListener("click", () => {
+        const wrap = $("settle-qr-wrap");
+        if (wrap.classList.contains("hidden")) { if (renderQr()) wrap.classList.remove("hidden"); }
+        else wrap.classList.add("hidden");
+      });
+      $("settle-amount").addEventListener("input", () => {
+        if (!$("settle-qr-wrap").classList.contains("hidden") && currentCents() > 0) renderQr();
+      });
+      $("settle-iban-copy").addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(formatIban(payee.iban)); toast("IBAN kopiert."); }
+        catch { toast("Kopieren nicht möglich – bitte IBAN abtippen."); }
+      });
+    }
+  }
   // Guthaben-Hinweis bei Überzahlung. Wer zu viel zahlt, bekommt die
   // Differenz als Guthaben bei genau der anderen Person gutgeschrieben.
   const refreshExtraHint = () => {
@@ -2174,6 +2238,22 @@ function openMemberModal(uid) {
       <div class="field">
         <label>Dein Anzeigename</label>
         <input type="text" id="member-name" value="${esc(m.name)}">
+      </div>
+      <p class="muted small" style="margin:4px 0 0">Zahlungsoptionen (optional) – damit dir andere
+        beim Ausgleich mit einem Klick zahlen können:</p>
+      <div class="field">
+        <label>PayPal.me-Name oder -Link</label>
+        <input type="text" id="member-paypal" placeholder="z. B. MaxMuster oder paypal.me/MaxMuster"
+          value="${esc(m.paypal || "")}" autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="field">
+        <label>IBAN (für Überweisungs-QR-Code)</label>
+        <input type="text" id="member-iban" placeholder="DE12 3456 …"
+          value="${esc(formatIban(m.iban || ""))}" autocapitalize="characters" autocorrect="off">
+      </div>
+      <div class="field">
+        <label>Kontoinhaber (falls anders als dein Anzeigename)</label>
+        <input type="text" id="member-payname" placeholder="${esc(m.name)}" value="${esc(m.payName || "")}">
       </div>` : ""}
       ${canChangeRole ? `
       <div class="field">
@@ -2204,6 +2284,17 @@ function openMemberModal(uid) {
     const updates = {};
     if (me) {
       const name = $("member-name").value.trim();
+      // Zahlungsdaten prüfen, BEVOR irgendetwas gespeichert wird
+      const ppRaw = $("member-paypal").value.trim();
+      const pp = normalizePaypal(ppRaw);
+      if (ppRaw && !pp) { toast("PayPal.me-Name ungültig – nur Buchstaben/Zahlen, z. B. MaxMuster."); return; }
+      const ibRaw = $("member-iban").value.trim();
+      const ib = normalizeIban(ibRaw);
+      if (ibRaw && !validIban(ib)) { toast("Die IBAN ist ungültig – bitte prüfen."); return; }
+      const pn = $("member-payname").value.trim();
+      if (pp !== (m.paypal || "")) updates.paypal = pp;
+      if (ib !== (m.iban || "")) updates.iban = ib;
+      if (pn !== (m.payName || "")) updates.payName = pn;
       if (name && name !== m.name) {
         updates.name = name;
         await updateDoc(doc(db, "users", state.user.uid), { name });

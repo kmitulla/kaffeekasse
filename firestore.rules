@@ -108,14 +108,16 @@ service cloud.firestore {
         );
         // Admin/Benutzer verwalten Mitglieder; die Rolle 'owner'
         // darf nur der Benutzer (owner) selbst vergeben/aendern.
-        // Jeder darf seinen eigenen Anzeigenamen im Team aendern.
+        // Jeder darf seinen eigenen Anzeigenamen und seine
+        // Zahlungsdaten (PayPal, IBAN, Kontoinhaber) im Team aendern.
         allow update: if signedIn() && (
           (isAdmin(teamId)
             && resource.data.role != 'owner'
             && request.resource.data.role != 'owner')
           || isOwner(teamId)
           || (request.auth.uid == uid
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']))
+              && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['name', 'paypal', 'iban', 'payName']))
         );
         allow delete: if signedIn() && (
           (isAdmin(teamId) && resource.data.role != 'owner')
