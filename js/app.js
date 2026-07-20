@@ -1073,7 +1073,7 @@ function renderDashboard() {
       <button class="btn btn-small btn-primary" data-confirm="${esc(s.id)}">Bestätigen</button>
     </div>`).join("");
   $("pending-confirm-list").querySelectorAll("[data-confirm]").forEach(b =>
-    b.addEventListener("click", () => confirmSettlement(b.dataset.confirm)));
+    b.addEventListener("click", () => openConfirmSettleModal(b.dataset.confirm)));
 
   // Meine offenen Beträge (vereinfachte Schulden, die mich betreffen)
   const debts = simplifyDebts(state.balances).filter(d => d.from === uid || d.to === uid);
@@ -1371,7 +1371,7 @@ function renderSettle() {
       </div>`).join("")
     : `<div class="empty-note">Noch keine Ausgleichszahlungen.</div>`;
   $("settle-history").querySelectorAll("[data-confirm]").forEach(b =>
-    b.addEventListener("click", (e) => { e.stopPropagation(); confirmSettlement(b.dataset.confirm); }));
+    b.addEventListener("click", (e) => { e.stopPropagation(); openConfirmSettleModal(b.dataset.confirm); }));
   if (admin) {
     $("settle-history").querySelectorAll("[data-sid]").forEach(el =>
       el.addEventListener("click", () => openSettlementAdminModal(el.dataset.sid)));
@@ -1431,15 +1431,69 @@ function openSettlementAdminModal(id) {
 }
 
 const confirmingIds = new Set();
-function confirmSettlement(id) {
+// Bestätigungs-Dialog: Empfänger prüft die gemeldete Zahlung, kann den
+// tatsächlich erhaltenen Betrag anpassen (z. B. 6,25 € gemeldet, aber
+// 10 € bar erhalten – oder eine Teil-/Anzahlung) und bestätigt dann.
+function openConfirmSettleModal(id) {
+  const s = state.settlements.find(x => x.id === id);
+  if (!s || s.status !== "pending" || s.to !== state.user.uid) return;
+  const owed = debtBetween(s.from, s.to); // was der Zahler dir aktuell schuldet
+  openModal(`
+    <h3 class="modal-title">Zahlung bestätigen</h3>
+    <p class="muted small" style="margin-bottom:12px">
+      ${esc(memberNameReal(s.from))} hat gemeldet, dir <b>${formatCents(s.amount)}</b> gezahlt zu haben.
+      Passe den Betrag an, falls du etwas anderes erhalten hast, und bestätige,
+      sobald das Geld da ist.</p>
+    <div class="stack">
+      <div class="field">
+        <label>Tatsächlich erhalten (€)</label>
+        <input type="text" id="cs-amount" inputmode="decimal" value="${(s.amount / 100).toFixed(2).replace(".", ",")}">
+      </div>
+      <p class="muted small" id="cs-hint" style="display:none"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="cs-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="cs-ok">Erhalt bestätigen</button>
+    </div>`);
+  wireMoneyInput($("cs-amount"));
+  const refreshHint = () => {
+    const cents = parseEuro($("cs-amount").value) || 0;
+    const el = $("cs-hint");
+    if (cents <= 0 || owed <= 0) { el.style.display = "none"; return; }
+    if (cents > owed) {
+      el.style.display = "";
+      el.textContent = `${formatCents(cents - owed)} mehr als offen – das wird `
+        + `${memberNameReal(s.from)} als Guthaben bei dir gutgeschrieben (du schuldest es zurück).`;
+    } else if (cents < owed) {
+      el.style.display = "";
+      el.textContent = `Teilzahlung – ${memberNameReal(s.from)} schuldet dir danach noch ${formatCents(owed - cents)}.`;
+    } else {
+      el.style.display = "none";
+    }
+  };
+  $("cs-amount").addEventListener("input", refreshHint);
+  refreshHint();
+  $("cs-cancel").addEventListener("click", closeModal);
+  $("cs-ok").addEventListener("click", (e) => {
+    const cents = parseEuro($("cs-amount").value);
+    if (!cents || cents <= 0) { toast("Bitte einen gültigen Betrag eingeben."); return; }
+    if (!lockOnce(e.currentTarget)) return;
+    confirmSettlement(id, cents);
+    closeModal();
+  });
+}
+
+function confirmSettlement(id, amount) {
   const s = state.settlements.find(x => x.id === id);
   // Schutz: nur offene Zahlungen, und jede nur ein einziges Mal
   if (!s || s.status !== "pending" || confirmingIds.has(id)) return;
   confirmingIds.add(id);
   setTimeout(() => confirmingIds.delete(id), 5000);
-  fireWrite(updateDoc(doc(db, "teams", state.teamId, "settlements", id), {
-    status: "confirmed", confirmedAt: serverTimestamp()
-  }), "Bestätigen fehlgeschlagen.");
+  const updates = { status: "confirmed", confirmedAt: serverTimestamp() };
+  // Betrag nur mitschreiben, wenn der Empfänger ihn angepasst hat.
+  if (typeof amount === "number" && amount > 0 && amount !== s.amount) updates.amount = amount;
+  fireWrite(updateDoc(doc(db, "teams", state.teamId, "settlements", id), updates),
+    "Bestätigen fehlgeschlagen.");
   toast("Zahlung bestätigt.");
 }
 
@@ -1471,13 +1525,21 @@ function openSettleModal(kind, otherUid, suggested) {
     const cents = parseEuro($("settle-amount").value) || 0;
     const extra = cents - suggested;
     const el = $("settle-extra-hint");
-    if (extra > 0 && suggested >= 0) {
+    if (cents <= 0 || suggested <= 0) { el.style.display = "none"; return; }
+    if (extra > 0) {
+      // Überzahlung -> Guthaben bei genau der anderen Person
       el.style.display = "";
       el.textContent = kind === "pay"
         ? `${formatCents(extra)} mehr als offen – das wird dir als Guthaben bei `
           + `${memberNameReal(otherUid)} gutgeschrieben (${memberNameReal(otherUid)} schuldet es dir zurück).`
         : `${formatCents(extra)} mehr als offen – das wird ${memberNameReal(otherUid)} als Guthaben `
           + `bei dir gutgeschrieben (du schuldest es zurück).`;
+    } else if (extra < 0) {
+      // Teilzahlung / Anzahlung -> Rest bleibt offen
+      el.style.display = "";
+      el.textContent = kind === "pay"
+        ? `Teilzahlung – du schuldest ${memberNameReal(otherUid)} danach noch ${formatCents(-extra)}.`
+        : `Teilzahlung – ${memberNameReal(otherUid)} schuldet dir danach noch ${formatCents(-extra)}.`;
     } else {
       el.style.display = "none";
     }

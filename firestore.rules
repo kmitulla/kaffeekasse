@@ -164,7 +164,7 @@ service cloud.firestore {
             && resource.data.status == 'pending'
             && request.resource.data.status == 'confirmed'
             && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['status', 'confirmedAt']))
+               .hasOnly(['amount', 'status', 'confirmedAt']))
           || (isAdmin(teamId)
               && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['amount', 'status', 'confirmedAt', 'note']))
