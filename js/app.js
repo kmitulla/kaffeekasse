@@ -314,6 +314,22 @@ function openResets() {
   return state.pwResets.filter(r => r.status === "open");
 }
 
+// Zurücksetzungs-E-Mail senden – mit Rücksprung-Link zur App.
+// Falls die Domain (noch) nicht in Firebase autorisiert ist, wird
+// automatisch ohne Rücksprung-Link gesendet, damit die E-Mail immer rausgeht.
+async function sendResetMail(email) {
+  const settings = { url: location.origin + location.pathname };
+  try {
+    await sendPasswordResetEmail(auth, email, settings);
+  } catch (err) {
+    if ((err?.code || "").includes("unauthorized-continue-uri")) {
+      await sendPasswordResetEmail(auth, email);
+    } else {
+      throw err;
+    }
+  }
+}
+
 function renderMasterUI() {
   const master = state.user && isMasterUser();
   $("master-card").classList.toggle("hidden", !master);
@@ -413,7 +429,7 @@ function renderUserAdminList() {
       if (!r || !lockOnce(e.currentTarget)) return;
       try {
         // Nur EINE E-Mail senden – jede neue E-Mail macht ältere Links ungültig.
-        await sendPasswordResetEmail(auth, r.email);
+        await sendResetMail(r.email);
         // Alle offenen Anfragen dieser Person zusammen abhaken.
         const same = state.pwResets.filter(x =>
           x.status === "open" && x.email.toLowerCase() === r.email.toLowerCase());
@@ -560,7 +576,7 @@ async function openUserDetailModal(uid) {
   $("ud-back").addEventListener("click", openUserAdminModal);
   $("ud-pwreset").addEventListener("click", async () => {
     try {
-      await sendPasswordResetEmail(auth, u.email);
+      await sendResetMail(u.email);
       toast(`Zurücksetzungs-E-Mail an ${u.email} gesendet.`);
     } catch (err) {
       console.error(err);
@@ -669,7 +685,7 @@ function openCreateUserModal() {
         });
       }
       if (!pass) {
-        await sendPasswordResetEmail(auth, email);
+        await sendResetMail(email);
         toast(`Konto angelegt – ${email} bekommt eine E-Mail zum Passwort-Festlegen.`);
       } else {
         toast("Konto angelegt und freigeschaltet.");
