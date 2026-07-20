@@ -148,12 +148,14 @@ service cloud.firestore {
       match /settlements/{settlementId} {
         allow read: if isMember(teamId);
         // Zahler meldet "bezahlt" (pending) ODER Empfaenger
-        // bestaetigt direkt selbst (confirmed).
+        // bestaetigt direkt selbst (confirmed). Admin/Benutzer duerfen
+        // ausserdem Zahlungen zwischen beliebigen Personen erfassen.
         allow create: if isMember(teamId) && (
           (request.resource.data.status == 'pending'
             && request.resource.data.from == request.auth.uid)
           || (request.resource.data.status == 'confirmed'
             && request.resource.data.to == request.auth.uid)
+          || isAdmin(teamId)
         );
         // Der Empfaenger darf eine offene Zahlung bestaetigen;
         // Admin/Benutzer duerfen Zahlungen bearbeiten (Betrag, Status).

@@ -1455,6 +1455,7 @@ function openSettleModal(kind, otherUid, suggested) {
         <label>Betrag (€)</label>
         <input type="text" id="settle-amount" inputmode="decimal" value="${(suggested / 100).toFixed(2).replace(".", ",")}">
       </div>
+      <p class="muted small" id="settle-extra-hint" style="display:none"></p>
       <p class="muted small">${kind === "pay"
         ? "Der Empfänger muss die Zahlung anschließend bestätigen – erst dann gilt sie als ausgeglichen."
         : "Damit bestätigst du, dass du das Geld bereits erhalten hast."}</p>
@@ -1464,6 +1465,25 @@ function openSettleModal(kind, otherUid, suggested) {
       <button class="btn btn-primary" id="settle-ok">${kind === "pay" ? "Als bezahlt melden" : "Erhalt bestätigen"}</button>
     </div>`);
   wireMoneyInput($("settle-amount"));
+  // Guthaben-Hinweis bei Überzahlung. Wer zu viel zahlt, bekommt die
+  // Differenz als Guthaben bei genau der anderen Person gutgeschrieben.
+  const refreshExtraHint = () => {
+    const cents = parseEuro($("settle-amount").value) || 0;
+    const extra = cents - suggested;
+    const el = $("settle-extra-hint");
+    if (extra > 0 && suggested >= 0) {
+      el.style.display = "";
+      el.textContent = kind === "pay"
+        ? `${formatCents(extra)} mehr als offen – das wird dir als Guthaben bei `
+          + `${memberNameReal(otherUid)} gutgeschrieben (${memberNameReal(otherUid)} schuldet es dir zurück).`
+        : `${formatCents(extra)} mehr als offen – das wird ${memberNameReal(otherUid)} als Guthaben `
+          + `bei dir gutgeschrieben (du schuldest es zurück).`;
+    } else {
+      el.style.display = "none";
+    }
+  };
+  $("settle-amount").addEventListener("input", refreshExtraHint);
+  refreshExtraHint();
   $("settle-cancel").addEventListener("click", closeModal);
   $("settle-ok").addEventListener("click", (e) => {
     const cents = parseEuro($("settle-amount").value);
@@ -1488,6 +1508,112 @@ function openSettleModal(kind, otherUid, suggested) {
     fireWrite(addDoc(collection(db, "teams", state.teamId, "settlements"), data), "Melden fehlgeschlagen.");
     closeModal();
     toast(kind === "pay" ? "Gemeldet – wartet auf Bestätigung." : "Zahlung verbucht.");
+  });
+}
+
+// Wie viel schuldet `from` aktuell an `to`? (aus den vorgeschlagenen
+// Zahlungen abgeleitet). Positiv = from schuldet to, negativ = to schuldet from.
+function debtBetween(from, to) {
+  const debts = simplifyDebts(state.balances);
+  const d = debts.find(x => x.from === from && x.to === to);
+  if (d) return d.amount;
+  const r = debts.find(x => x.from === to && x.to === from);
+  if (r) return -r.amount;
+  return 0;
+}
+
+// Zahlung zwischen zwei Personen erfassen. Admins dürfen beliebige
+// Paare erfassen (sofort ausgeglichen). Normale Nutzer nur eigene
+// Zahlungen (als Zahler melden oder als Empfänger bestätigen) –
+// passend zu den Firestore-Regeln.
+function openRecordPaymentModal() {
+  const admin = isAdmin();
+  const me = state.user.uid;
+  const members = activeMembers();
+  if (members.length < 2) { toast("Dafür braucht es mindestens zwei aktive Mitglieder."); return; }
+
+  const defFrom = admin ? members[0].uid : me;
+  const defTo = admin
+    ? (members.find(m => m.uid !== defFrom)?.uid || members[1].uid)
+    : (members.find(m => m.uid !== me)?.uid || members[0].uid);
+  const optionsFor = (sel) => members
+    .map(m => `<option value="${esc(m.uid)}" ${m.uid === sel ? "selected" : ""}>${esc(m.name)}</option>`)
+    .join("");
+
+  openModal(`
+    <h3 class="modal-title">Zahlung erfassen</h3>
+    <p class="muted small" style="margin-bottom:12px">Wer hat wem Geld gegeben? Der Betrag wird
+      direkt zwischen genau diesen beiden Personen verrechnet.</p>
+    <div class="stack">
+      <div class="field">
+        <label>Von (zahlt)</label>
+        <select id="rp-from">${optionsFor(defFrom)}</select>
+      </div>
+      <div class="field">
+        <label>An (bekommt)</label>
+        <select id="rp-to">${optionsFor(defTo)}</select>
+      </div>
+      <div class="field">
+        <label>Betrag (€)</label>
+        <input type="text" id="rp-amount" inputmode="decimal" placeholder="0,00">
+      </div>
+      <p class="muted small" id="rp-hint"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="rp-cancel">Abbrechen</button>
+      <button class="btn btn-primary" id="rp-ok">Erfassen</button>
+    </div>`);
+
+  wireMoneyInput($("rp-amount"));
+  $("rp-cancel").addEventListener("click", closeModal);
+
+  const refreshHint = () => {
+    const from = $("rp-from").value, to = $("rp-to").value;
+    const cents = parseEuro($("rp-amount").value) || 0;
+    const el = $("rp-hint");
+    if (from === to) { el.textContent = "Bitte zwei verschiedene Personen wählen."; return; }
+    const owed = debtBetween(from, to); // >0: from schuldet to
+    if (cents <= 0) {
+      el.textContent = owed > 0
+        ? `Offen: ${memberNameReal(from)} schuldet ${memberNameReal(to)} noch ${formatCents(owed)}.`
+        : owed < 0
+          ? `Hinweis: Aktuell schuldet eher ${memberNameReal(to)} an ${memberNameReal(from)} (${formatCents(-owed)}).`
+          : `Zwischen den beiden ist aktuell nichts offen.`;
+      return;
+    }
+    const base = Math.max(owed, 0);
+    if (cents > base) {
+      const extra = cents - base;
+      el.textContent = `${formatCents(extra)} mehr als offen – das wird `
+        + `${memberNameReal(from)} als Guthaben bei ${memberNameReal(to)} gutgeschrieben `
+        + `(${memberNameReal(to)} schuldet den Betrag dann zurück).`;
+    } else {
+      el.textContent = `Verbleibt offen: ${formatCents(base - cents)}.`;
+    }
+  };
+  ["rp-from", "rp-to", "rp-amount"].forEach(id => {
+    $(id).addEventListener("input", refreshHint);
+    $(id).addEventListener("change", refreshHint);
+  });
+  refreshHint();
+
+  $("rp-ok").addEventListener("click", (e) => {
+    const from = $("rp-from").value, to = $("rp-to").value;
+    const cents = parseEuro($("rp-amount").value);
+    if (from === to) { toast("Bitte zwei verschiedene Personen wählen."); return; }
+    if (!cents || cents <= 0) { toast("Bitte einen gültigen Betrag eingeben."); return; }
+    // Status passend zu den Berechtigungen bestimmen.
+    let status;
+    if (admin) status = "confirmed";
+    else if (from === me) status = "pending";
+    else if (to === me) status = "confirmed";
+    else { toast("Nur Admins können Zahlungen zwischen anderen Personen erfassen."); return; }
+    if (!lockOnce(e.currentTarget)) return;
+    const data = { from, to, amount: cents, status, createdBy: me, createdAt: serverTimestamp() };
+    if (status === "confirmed") data.confirmedAt = serverTimestamp();
+    fireWrite(addDoc(collection(db, "teams", state.teamId, "settlements"), data), "Erfassen fehlgeschlagen.");
+    closeModal();
+    toast(status === "confirmed" ? "Zahlung verbucht." : "Gemeldet – wartet auf Bestätigung.");
   });
 }
 
@@ -1788,6 +1914,7 @@ function runExport(format) {
 // Ausgabe anlegen / bearbeiten
 // ---------------------------------------------------------
 $("btn-add-expense").addEventListener("click", () => openExpenseModal(null));
+$("btn-record-payment").addEventListener("click", openRecordPaymentModal);
 
 function openExpenseModal(expenseId) {
   const existing = expenseId ? state.expenses.find(e => e.id === expenseId) : null;
