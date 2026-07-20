@@ -119,6 +119,7 @@ body {
   outline: none; transition: border-color 0.2s;
   -webkit-appearance: none; appearance: none;
 }
+.field textarea { resize: vertical; min-height: 130px; line-height: 1.45; font-size: 0.95rem; }
 .field input:focus, .field select:focus { border-color: var(--accent); }
 
 /* Datum: natives Eingabefeld, Kalender-Symbol sichtbar und antippbar */

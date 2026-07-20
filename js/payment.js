@@ -77,6 +77,29 @@ export function qrSvg(data) {
   return qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true });
 }
 
+// PayPals "Geld anfordern"-Seite (Person und Betrag wählt man dort –
+// einen Link mit vorausgefüllter Anfrage bietet PayPal nicht an).
+export const PAYPAL_REQUEST_URL = "https://www.paypal.com/myaccount/transfer/homepage/request";
+
+// Fertige Zahlungserinnerung zum Teilen (WhatsApp & Co.).
+// Enthält nur die Zahlungsoptionen, die tatsächlich hinterlegt sind.
+export function reminderText({ debtorName, teamName, cents, paypal, iban, payName }) {
+  const amount = (cents / 100).toFixed(2).replace(".", ",");
+  const lines = [
+    `Hallo ${debtorName}, kleine Erinnerung aus der Kaffeekasse${teamName ? ` „${teamName}“` : ""}: `
+      + `du schuldest mir noch ${amount} €.`
+  ];
+  const opts = [];
+  if (paypal) opts.push(`PayPal (Betrag ist vorausgefüllt): ${paypalMeLink(paypal, cents)}`);
+  if (iban) opts.push(`Überweisung: ${formatIban(iban)}${payName ? ` (${payName})` : ""}`);
+  if (opts.length) {
+    lines.push("", "So kannst du zahlen:");
+    for (const o of opts) lines.push(`• ${o}`);
+  }
+  lines.push("", "Danke! ☕");
+  return lines.join("\n");
+}
+
 // Für Tests: Roh-Matrix erzeugen
 export function qrMatrix(data) {
   const qr = qrcode(0, "M");

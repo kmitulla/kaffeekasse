@@ -19,7 +19,7 @@ import {
 import { MASTER_EMAIL } from "./firebase-config.js";
 import {
   normalizePaypal, paypalMeLink, normalizeIban, formatIban, validIban,
-  epcQrData, qrSvg
+  epcQrData, qrSvg, reminderText, PAYPAL_REQUEST_URL
 } from "./payment.js";
 
 // ---------------------------------------------------------
@@ -1110,7 +1110,10 @@ function renderDashboard() {
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
             <span class="item-amount positive">${formatCents(d.amount)}</span>
-            <button class="btn btn-small btn-secondary" data-received="${esc(d.from)}" data-amount="${d.amount}">Erhalten</button>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-small btn-secondary" data-remind="${esc(d.from)}" data-amount="${d.amount}">Erinnern</button>
+              <button class="btn btn-small btn-secondary" data-received="${esc(d.from)}" data-amount="${d.amount}">Erhalten</button>
+            </div>
           </div>
         </div>`;
     }
@@ -1120,6 +1123,8 @@ function renderDashboard() {
     b.addEventListener("click", () => openSettleModal("pay", b.dataset.pay, parseInt(b.dataset.amount, 10))));
   $("my-debts-list").querySelectorAll("[data-received]").forEach(b =>
     b.addEventListener("click", () => openSettleModal("received", b.dataset.received, parseInt(b.dataset.amount, 10))));
+  $("my-debts-list").querySelectorAll("[data-remind]").forEach(b =>
+    b.addEventListener("click", () => openReminderModal(b.dataset.remind, parseInt(b.dataset.amount, 10))));
   $("my-debts-list").querySelectorAll("[data-cancel]").forEach(b =>
     b.addEventListener("click", async () => {
       await deleteDoc(doc(db, "teams", state.teamId, "settlements", b.dataset.cancel));
@@ -1740,6 +1745,59 @@ function openRecordPaymentModal() {
     fireWrite(addDoc(collection(db, "teams", state.teamId, "settlements"), data), "Erfassen fehlgeschlagen.");
     closeModal();
     toast(status === "confirmed" ? "Zahlung verbucht." : "Gemeldet – wartet auf Bestätigung.");
+  });
+}
+
+// Zahlungserinnerung: fertige Nachricht mit den eigenen Zahlungs-
+// optionen (PayPal-Link mit Betrag, IBAN) zum Teilen in WhatsApp & Co.
+function openReminderModal(debtorUid, cents) {
+  const meM = state.members[state.user.uid] || {};
+  const text = reminderText({
+    debtorName: memberNameReal(debtorUid),
+    teamName: state.team?.name || "",
+    cents,
+    paypal: meM.paypal,
+    iban: meM.iban,
+    payName: meM.payName
+  });
+  openModal(`
+    <h3 class="modal-title">Zahlungserinnerung</h3>
+    <div class="stack">
+      <div class="field">
+        <label>Nachricht (kannst du noch anpassen)</label>
+        <textarea id="rem-text" rows="9">${esc(text)}</textarea>
+      </div>
+      ${!(meM.paypal || meM.iban) ? `
+      <p class="muted small">Tipp: Hinterlege PayPal oder IBAN in deinem Profil
+        (Team → dein Name) – dann steht dein Zahlungslink automatisch mit drin.</p>` : ""}
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="rem-copy">Kopieren</button>
+      <button class="btn btn-primary" id="rem-share">Teilen / Senden</button>
+    </div>
+    <div class="modal-actions">
+      <a class="btn btn-secondary" href="${esc(PAYPAL_REQUEST_URL)}" target="_blank" rel="noopener">${icon("banknote")} In PayPal anfordern</a>
+    </div>
+    <p class="muted small" style="text-align:center;margin-top:8px">„In PayPal anfordern“ öffnet
+      PayPals Geld-anfordern-Seite – Person und Betrag wählst du dort aus.</p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="rem-close">Schließen</button>
+    </div>`);
+  $("rem-close").addEventListener("click", closeModal);
+  const copyText = async () => {
+    try { await navigator.clipboard.writeText($("rem-text").value); toast("Nachricht kopiert."); }
+    catch { toast("Kopieren nicht möglich – bitte Text markieren und kopieren."); }
+  };
+  $("rem-copy").addEventListener("click", copyText);
+  $("rem-share").addEventListener("click", async () => {
+    const t = $("rem-text").value;
+    if (navigator.share) {
+      try { await navigator.share({ text: t }); }
+      catch { /* Teilen abgebrochen – kein Fehler */ }
+    } else {
+      // Am PC gibt es oft keinen Teilen-Dialog -> Nachricht kopieren
+      await copyText();
+    }
   });
 }
 
