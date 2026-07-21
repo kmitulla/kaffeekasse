@@ -77,16 +77,20 @@ Nicht jeder, der die Seite findet, kann die App benutzen:
 - Das ist auch serverseitig über die Firestore-Regeln abgesichert, nicht nur
   in der App-Oberfläche.
 
-### Wichtig: Passwort-Link auf die App umleiten (einmalig)
+### Wichtig: Passwort-Link auf die App umleiten (einmalig, PFLICHT!)
 
-Damit der Link aus Passwort-E-Mails die **schöne Seite in der App** öffnet
-(mit klaren deutschen Hinweisen statt der Firebase-Standardseite):
+Ohne diesen Schritt landen Passwort-Links auf der Firebase-Standardseite
+(`…firebaseapp.com/__/auth/action`). Ist der API-Key – wie hier – per
+HTTP-Referrer auf `kmitulla.github.io` beschränkt, zeigt diese Seite nur
+**„Error encountered … API_KEY_HTTP_REFERRER_BLOCKED“**. Deshalb:
 
 1. Firebase Console → **Authentication → Templates** (Vorlagen).
 2. Vorlage **„Passwort zurücksetzen“** öffnen → **Stift-Symbol** (Bearbeiten).
 3. Unten auf **„Aktions-URL anpassen“** klicken und eintragen:
    `https://kmitulla.github.io/kaffeekasse/`
 4. **Speichern.** (Gilt automatisch für alle E-Mail-Vorlagen des Projekts.)
+5. Danach eine **neue** Zurücksetzungs-E-Mail anfordern – Links aus alten
+   E-Mails zeigen noch auf die alte Adresse.
 
 Gut zu wissen zu den Links: Jeder Link ist **nur einmal** verwendbar, nur
 **begrenzte Zeit** gültig, und wenn mehrere E-Mails verschickt wurden, zählt
