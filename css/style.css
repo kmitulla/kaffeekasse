@@ -243,7 +243,7 @@ a.btn { text-decoration: none; }
 
 .app-main {
   flex: 1;
-  padding: calc(env(safe-area-inset-top) + 74px) 16px calc(var(--tab-h) + env(safe-area-inset-bottom) + 30px);
+  padding: calc(env(safe-area-inset-top) + 74px) 16px calc(var(--tab-h) + env(safe-area-inset-bottom) + 88px);
   max-width: 640px; width: 100%; margin: 0 auto;
 }
 
@@ -321,9 +321,11 @@ a.btn { text-decoration: none; }
   color: #2a1608; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 14px 32px rgba(231, 111, 81, 0.45), inset 0 1.5px 0 rgba(255,255,255,0.45);
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, opacity 0.25s ease;
 }
 .fab:active { transform: scale(0.92); }
+/* Beim Scrollen ausblenden, damit Beträge in Listen nicht verdeckt werden */
+.fab.fab-hidden { opacity: 0; transform: scale(0.85) translateY(10px); pointer-events: none; }
 
 /* ---------- Tab-Bar ---------- */
 .tab-bar {

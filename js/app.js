@@ -2199,6 +2199,18 @@ function runExport(format) {
 $("btn-add-expense").addEventListener("click", () => openExpenseModal(null));
 $("btn-record-payment").addEventListener("click", openRecordPaymentModal);
 
+// FAB blendet beim Scrollen aus (verdeckt sonst rechtsbündige Beträge)
+// und kommt kurz nach dem Scrollen automatisch wieder.
+(() => {
+  const fab = $("btn-add-expense");
+  let hideTimer = null;
+  window.addEventListener("scroll", () => {
+    fab.classList.add("fab-hidden");
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => fab.classList.remove("fab-hidden"), 500);
+  }, { passive: true });
+})();
+
 function openExpenseModal(expenseId) {
   const existing = expenseId ? state.expenses.find(e => e.id === expenseId) : null;
   if (existing && existing.type === "adjustment") {
