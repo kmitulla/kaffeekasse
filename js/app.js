@@ -52,7 +52,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const ROLE_LABEL = { owner: "Benutzer", admin: "Admin", user: "User" };
+const ROLE_LABEL = { owner: "Besitzer", admin: "Admin", user: "User" };
 const ROLE_BADGE = { owner: "badge-owner", admin: "badge-admin", user: "badge-user" };
 
 function isMasterUser() {
@@ -287,19 +287,23 @@ $("auth-form").addEventListener("submit", async (e) => {
   }
 });
 
-// "Passwort vergessen": erzeugt eine Anfrage, die der Verwalter
-// freigeben muss – erst dann geht die Zurücksetzungs-E-Mail raus.
-$("auth-forgot").addEventListener("click", async () => {
+// "Passwort vergessen": Zurücksetzungs-E-Mail geht SOFORT raus –
+// ohne Freigabe-Umweg. Über den Link in der E-Mail legt man auf
+// unserer eigenen Seite direkt das neue Wunschpasswort fest.
+// Wichtig: Es zählt immer nur der Link aus der NEUESTEN E-Mail.
+$("auth-forgot").addEventListener("click", async (e) => {
   const email = $("auth-email").value.trim();
   if (!email || !email.includes("@")) { toast("Bitte zuerst deine E-Mail eintragen."); return; }
+  if (!lockOnce(e.currentTarget)) return;
   try {
-    await addDoc(collection(db, "pwResets"), {
-      email, requestedAt: serverTimestamp(), status: "open"
-    });
-    toast("Der Verwalter wurde informiert und gibt die Zurücksetzung frei. Du bekommst dann eine E-Mail.");
+    await sendResetMail(email);
+    toast("E-Mail ist unterwegs! Öffne den Link aus der NEUESTEN E-Mail und lege dein neues Passwort fest.");
   } catch (err) {
     console.error(err);
-    toast("Anfrage konnte nicht gesendet werden.");
+    const c = err?.code || "";
+    if (c.includes("user-not-found")) toast("Zu dieser E-Mail gibt es kein Konto.");
+    else if (c.includes("too-many-requests")) toast("Zu viele Versuche – bitte in ein paar Minuten erneut.");
+    else toast("E-Mail konnte nicht gesendet werden.");
   }
 });
 
@@ -770,13 +774,15 @@ $("reset-request-new").addEventListener("click", async (e) => {
   if (!email.includes("@")) { toast("Bitte deine E-Mail eintragen."); return; }
   if (!lockOnce(e.currentTarget)) return;
   try {
-    await addDoc(collection(db, "pwResets"), {
-      email, requestedAt: serverTimestamp(), status: "open"
-    });
-    toast("Der Verwalter wurde informiert und gibt die Zurücksetzung frei.");
+    // Neuen Link direkt senden – ältere Links werden damit ungültig.
+    await sendResetMail(email);
+    toast("Neue E-Mail gesendet! Es funktioniert nur der Link aus dieser neuesten E-Mail.");
   } catch (err) {
     console.error(err);
-    toast("Anfrage konnte nicht gesendet werden.");
+    const c = err?.code || "";
+    if (c.includes("user-not-found")) toast("Zu dieser E-Mail gibt es kein Konto.");
+    else if (c.includes("too-many-requests")) toast("Zu viele Versuche – bitte in ein paar Minuten erneut.");
+    else toast("E-Mail konnte nicht gesendet werden.");
   }
 });
 
@@ -1423,7 +1429,7 @@ function renderSettle() {
   }
 }
 
-// Admin/Benutzer: Ausgleichszahlung bearbeiten, löschen, rückgängig machen
+// Admin/Besitzer: Ausgleichszahlung bearbeiten, löschen, rückgängig machen
 function openSettlementAdminModal(id) {
   const s = state.settlements.find(x => x.id === id);
   if (!s || !isAdmin()) return;
@@ -1569,12 +1575,20 @@ function openSettleModal(kind, otherUid, suggested, opts = {}) {
           ${payee.paypal ? `<a class="btn btn-secondary" id="settle-paypal" href="${esc(paypalMeLink(payee.paypal, suggested))}" target="_blank" rel="noopener">${icon("banknote")} PayPal öffnen</a>` : ""}
           ${payee.iban ? `<button type="button" class="btn btn-secondary" id="settle-qr-btn">${icon("qr")} Überweisungs-QR</button>` : ""}
         </div>
+        ${payee.paypal ? `
+        <div class="pay-detail">
+          <span class="pay-detail-text">PayPal: @${esc(payee.paypal)}</span>
+          <button type="button" class="btn btn-small btn-secondary" id="settle-pp-copy">Kopieren</button>
+        </div>` : ""}
+        ${payee.iban ? `
+        <div class="pay-detail">
+          <span class="pay-detail-text">IBAN: ${esc(formatIban(payee.iban))}</span>
+          <button type="button" class="btn btn-small btn-secondary" id="settle-iban-copy">Kopieren</button>
+        </div>` : ""}
         <div id="settle-qr-wrap" class="hidden">
           <div class="qr-box" id="settle-qr"></div>
           <p class="muted small" style="text-align:center">Mit der Banking-App scannen – Empfänger,
             IBAN, Betrag und Verwendungszweck sind schon ausgefüllt.</p>
-          <p class="muted small" style="text-align:center">${esc(formatIban(payee.iban || ""))}
-            <button type="button" class="btn btn-small btn-secondary" id="settle-iban-copy">IBAN kopieren</button></p>
         </div>
         <p class="muted small">Der Betrag oben wird automatisch übernommen. Danach unten
           „Als bezahlt melden" drücken.</p>
@@ -1622,11 +1636,18 @@ function openSettleModal(kind, otherUid, suggested, opts = {}) {
       $("settle-amount").addEventListener("input", () => {
         if (!$("settle-qr-wrap").classList.contains("hidden") && currentCents() > 0) renderQr();
       });
-      $("settle-iban-copy").addEventListener("click", async () => {
-        try { await navigator.clipboard.writeText(formatIban(payee.iban)); toast("IBAN kopiert."); }
-        catch { toast("Kopieren nicht möglich – bitte IBAN abtippen."); }
-      });
     }
+    // PayPal-Name / IBAN nur kopieren (ohne zu zahlen)
+    const copyBtn = (id, value, label) => {
+      const btn = $(id);
+      if (!btn) return;
+      btn.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(value); toast(`${label} kopiert.`); }
+        catch { toast("Kopieren nicht möglich – bitte abtippen."); }
+      });
+    };
+    copyBtn("settle-pp-copy", payee.paypal || "", "PayPal-Name");
+    copyBtn("settle-iban-copy", formatIban(payee.iban || ""), "IBAN");
   }
   // Guthaben-Hinweis bei Überzahlung. Wer zu viel zahlt, bekommt die
   // Differenz als Guthaben bei genau der anderen Person gutgeschrieben.
@@ -2360,6 +2381,9 @@ function openMemberModal(uid) {
   const canChangeRole = owner && !me && m.role !== "owner";
   const canEditStart = admin && !me || owner;
   const canRemove = (admin && !me && m.role !== "owner") || (owner && !me);
+  // Zahlungsdaten: jeder die eigenen; Admin/Besitzer auch die der
+  // anderen (Admins nicht die des Besitzers – so wollen es die Regeln).
+  const canEditPay = me || owner || (admin && m.role !== "owner");
 
   openModal(`
     <h3 class="modal-title">${esc(m.name)} ${me ? "(du)" : ""}</h3>
@@ -2374,9 +2398,10 @@ function openMemberModal(uid) {
       <div class="field">
         <label>Dein Anzeigename</label>
         <input type="text" id="member-name" value="${esc(m.name)}">
-      </div>
-      <p class="muted small" style="margin:4px 0 0">Zahlungsoptionen (optional) – damit dir andere
-        beim Ausgleich mit einem Klick zahlen können:</p>
+      </div>` : ""}
+      ${canEditPay ? `
+      <p class="muted small" style="margin:4px 0 0">Zahlungsoptionen (optional) – damit
+        ${me ? "dir andere" : `andere ${esc(m.name)}`} beim Ausgleich mit einem Klick zahlen können:</p>
       <div class="field">
         <label>PayPal.me-Name oder -Link</label>
         <input type="text" id="member-paypal" placeholder="z. B. MaxMuster oder paypal.me/MaxMuster"
@@ -2388,7 +2413,7 @@ function openMemberModal(uid) {
           value="${esc(formatIban(m.iban || ""))}" autocapitalize="characters" autocorrect="off">
       </div>
       <div class="field">
-        <label>Kontoinhaber (falls anders als dein Anzeigename)</label>
+        <label>Kontoinhaber (falls anders als der Anzeigename)</label>
         <input type="text" id="member-payname" placeholder="${esc(m.name)}" value="${esc(m.payName || "")}">
       </div>` : ""}
       ${canChangeRole ? `
@@ -2408,7 +2433,7 @@ function openMemberModal(uid) {
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="member-close">Schließen</button>
-      ${(me || canChangeRole || canEditStart) ? `<button class="btn btn-primary" id="member-save">Speichern</button>` : ""}
+      ${(me || canChangeRole || canEditStart || canEditPay) ? `<button class="btn btn-primary" id="member-save">Speichern</button>` : ""}
     </div>
     ${canRemove && !inactive ? `<div class="modal-actions"><button class="btn btn-danger" id="member-remove">Mitglied entfernen</button></div>` : ""}
   `);
@@ -2418,8 +2443,7 @@ function openMemberModal(uid) {
   const saveBtn = $("member-save");
   if (saveBtn) saveBtn.addEventListener("click", async () => {
     const updates = {};
-    if (me) {
-      const name = $("member-name").value.trim();
+    if (canEditPay) {
       // Zahlungsdaten prüfen, BEVOR irgendetwas gespeichert wird
       const ppRaw = $("member-paypal").value.trim();
       const pp = normalizePaypal(ppRaw);
@@ -2431,6 +2455,9 @@ function openMemberModal(uid) {
       if (pp !== (m.paypal || "")) updates.paypal = pp;
       if (ib !== (m.iban || "")) updates.iban = ib;
       if (pn !== (m.payName || "")) updates.payName = pn;
+    }
+    if (me) {
+      const name = $("member-name").value.trim();
       if (name && name !== m.name) {
         updates.name = name;
         await updateDoc(doc(db, "users", state.user.uid), { name });
@@ -2529,7 +2556,7 @@ async function deactivateMember(uid) {
 $("btn-leave-team").addEventListener("click", async () => {
   const uid = state.user.uid;
   if (isOwner()) {
-    toast("Als Benutzer (Inhaber) kannst du das Team nicht verlassen – nur löschen.");
+    toast("Als Besitzer kannst du das Team nicht verlassen – nur löschen.");
     return;
   }
   const bal = state.balances[uid] || 0;

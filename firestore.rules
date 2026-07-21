@@ -42,7 +42,7 @@ service cloud.firestore {
       return memberDoc(teamId).data.role;
     }
 
-    // "Benutzer" (owner) hat alle Rechte, Admin die meisten
+    // "Besitzer" (owner) hat alle Rechte, Admin die meisten
     function isAdmin(teamId) {
       return isMember(teamId) && roleOf(teamId) in ['owner', 'admin'];
     }
@@ -97,7 +97,7 @@ service cloud.firestore {
       match /members/{uid} {
         allow read: if signedIn()
           && (request.auth.uid == uid || isMember(teamId));
-        // Selbst beitreten (nur als einfacher User), durch Admin/Benutzer,
+        // Selbst beitreten (nur als einfacher User), durch Admin/Besitzer,
         // oder: der Team-Ersteller legt sich selbst als 'owner' an.
         allow create: if isApproved() && (
           (request.auth.uid == uid && request.resource.data.role == 'user')
@@ -106,8 +106,8 @@ service cloud.firestore {
               && request.resource.data.role == 'owner'
               && get(/databases/$(database)/documents/teams/$(teamId)).data.ownerUid == request.auth.uid)
         );
-        // Admin/Benutzer verwalten Mitglieder; die Rolle 'owner'
-        // darf nur der Benutzer (owner) selbst vergeben/aendern.
+        // Admin/Besitzer verwalten Mitglieder; die Rolle 'owner'
+        // darf nur der Besitzer (owner) selbst vergeben/aendern.
         // Jeder darf seinen eigenen Anzeigenamen und seine
         // Zahlungsdaten (PayPal, IBAN, Kontoinhaber) im Team aendern.
         allow update: if signedIn() && (
@@ -131,11 +131,11 @@ service cloud.firestore {
         allow read: if isMember(teamId);
         // Jedes Mitglied darf eigene Ausgaben anlegen.
         // Verrechnungen (type 'adjustment', z.B. beim Entfernen
-        // eines Mitglieds) darf nur Admin/Benutzer anlegen.
+        // eines Mitglieds) darf nur Admin/Besitzer anlegen.
         allow create: if isMember(teamId)
           && request.resource.data.createdBy == request.auth.uid
           && (request.resource.data.type == 'expense' || isAdmin(teamId));
-        // Eigene Ausgaben aendern/loeschen; Admin/Benutzer alle.
+        // Eigene Ausgaben aendern/loeschen; Admin/Besitzer alle.
         allow update, delete: if isMember(teamId)
           && (resource.data.createdBy == request.auth.uid || isAdmin(teamId));
       }
@@ -162,7 +162,7 @@ service cloud.firestore {
       match /settlements/{settlementId} {
         allow read: if isMember(teamId);
         // Zahler meldet "bezahlt" (pending) ODER Empfaenger
-        // bestaetigt direkt selbst (confirmed). Admin/Benutzer duerfen
+        // bestaetigt direkt selbst (confirmed). Admin/Besitzer duerfen
         // ausserdem Zahlungen zwischen beliebigen Personen erfassen.
         allow create: if isMember(teamId) && (
           (request.resource.data.status == 'pending'
@@ -172,7 +172,7 @@ service cloud.firestore {
           || isAdmin(teamId)
         );
         // Der Empfaenger darf eine offene Zahlung bestaetigen;
-        // Admin/Benutzer duerfen Zahlungen bearbeiten (Betrag, Status).
+        // Admin/Besitzer duerfen Zahlungen bearbeiten (Betrag, Status).
         allow update: if isMember(teamId) && (
           (request.auth.uid == resource.data.to
             && resource.data.status == 'pending'

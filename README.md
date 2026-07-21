@@ -90,10 +90,9 @@ Damit der Link aus Passwort-E-Mails die **schöne Seite in der App** öffnet
 
 Gut zu wissen zu den Links: Jeder Link ist **nur einmal** verwendbar, nur
 **begrenzte Zeit** gültig, und wenn mehrere E-Mails verschickt wurden, zählt
-**nur die neueste**. Die App zeigt in diesen Fällen jetzt eine verständliche
-Meldung und bietet direkt „Neuen Link anfordern“ an (geht wieder als Anfrage
-an den Master). Beim Freigeben mehrerer offener Anfragen derselben Person
-sendet die App bewusst nur eine E-Mail.
+**nur die neueste**. Die App zeigt in diesen Fällen eine verständliche
+Meldung und sendet über „Neuen Link anfordern“ **sofort selbst** eine
+frische E-Mail – ganz ohne Umweg über den Master.
 
 ### Was der Master außerdem kann
 
@@ -103,11 +102,12 @@ sendet die App bewusst nur eine E-Mail.
   antippen → zu Teams hinzufügen, Rolle (User/Admin) ändern, aus Teams
   entfernen (verschieben = entfernen + woanders hinzufügen).
 - **Passwort zurücksetzen:** sendet der Person eine Firebase-E-Mail, über
-  die sie ein neues Passwort festlegt. (Direktes Setzen fremder Passwörter
-  erlaubt Firebase aus Sicherheitsgründen nur mit eigenem Server.)
-- **„Passwort vergessen“-Freigabe:** Klickt jemand beim Anmelden auf
-  „Passwort vergessen?“, entsteht eine Anfrage beim Master. Erst wenn er
-  sie freigibt, geht die Zurücksetzungs-E-Mail raus.
+  die sie ihr neues Wunschpasswort festlegt. (Direktes Setzen fremder
+  Passwörter erlaubt Firebase aus Sicherheitsgründen nur mit eigenem Server.)
+
+Hinweis: „Passwort vergessen?“ auf der Anmeldeseite sendet die
+Zurücksetzungs-E-Mail inzwischen **sofort automatisch** – eine Freigabe
+durch den Master ist nicht mehr nötig.
 
 Falls sich die Master-E-Mail einmal ändern soll: Sie steht an **zwei** Stellen
 und muss an beiden geändert werden – in `js/firebase-config.js` (MASTER_EMAIL)
