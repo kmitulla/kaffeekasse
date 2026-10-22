@@ -1,189 +1,365 @@
 rules_version = '2';
 
 // ============================================================
-// Kaffeekasse – Firestore Sicherheitsregeln
-// Diese Regeln schützen deine Daten, auch wenn der API-Key
-// öffentlich im Code steht (das ist bei Firebase normal).
+// Kaffeekasse – Firestore Sicherheitsregeln (gehärtet, Okt. 2026)
+// Diese Regeln sind die eigentliche Sicherheitsgrenze der App: Sie
+// schützen die Daten, auch wenn der (öffentliche) API-Key bekannt ist
+// und auch wenn jemand die App-Oberfläche umgeht.
+// Grundsatz: Alles ist verboten, was nicht ausdrücklich erlaubt ist,
+// und jedes gespeicherte Feld wird auf Typ, Länge und Format geprüft.
 // Einfügen unter: Firebase Console > Firestore Database > Regeln
 // ============================================================
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------- Grundfunktionen ----------
+
     function signedIn() {
       return request.auth != null;
     }
 
-    // Der Master schaltet neue Konten frei. Muss identisch sein mit
+    // Der Master schaltet Konten frei. Muss identisch sein mit
     // MASTER_EMAIL in js/firebase-config.js!
+    // Nur ein echtes E-Mail/Passwort-Konto zählt – ein anderer
+    // Anmeldeweg mit derselben E-Mail-Adresse ist KEIN Master.
     function isMaster() {
-      return signedIn() && request.auth.token.email == 'k.mitulla@gmail.com';
+      return signedIn()
+        && request.auth.token.email == 'k.mitulla@gmail.com'
+        && request.auth.token.firebase.sign_in_provider == 'password';
     }
 
-    // Nur vom Master freigeschaltete Konten duerfen die App nutzen.
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    // Nur vom Master freigeschaltete Konten dürfen die App nutzen.
     function isApproved() {
-      return signedIn() && (
-        isMaster()
-        || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true
-      );
+      return signedIn() && (isMaster() || userDoc().data.approved == true);
     }
 
-    function memberDoc(teamId) {
-      return get(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+    function teamPath(teamId) {
+      return /databases/$(database)/documents/teams/$(teamId);
+    }
+
+    function memberPath(teamId, uid) {
+      return /databases/$(database)/documents/teams/$(teamId)/members/$(uid);
+    }
+
+    function myMember(teamId) {
+      return get(memberPath(teamId, request.auth.uid));
     }
 
     function isMember(teamId) {
       return isApproved()
-        && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid))
-        && memberDoc(teamId).data.active == true;
+        && exists(memberPath(teamId, request.auth.uid))
+        && myMember(teamId).data.active == true;
     }
 
-    function roleOf(teamId) {
-      return memberDoc(teamId).data.role;
-    }
-
-    // "Besitzer" (owner) hat alle Rechte, Admin die meisten
     function isAdmin(teamId) {
-      return isMember(teamId) && roleOf(teamId) in ['owner', 'admin'];
+      return isMember(teamId) && myMember(teamId).data.role in ['owner', 'admin'];
     }
 
     function isOwner(teamId) {
-      return isMember(teamId) && roleOf(teamId) == 'owner';
+      return isMember(teamId) && myMember(teamId).data.role == 'owner';
+    }
+
+    function isActiveMember(teamId, uid) {
+      return exists(memberPath(teamId, uid))
+        && get(memberPath(teamId, uid)).data.active == true;
+    }
+
+    // ---------- Feldprüfungen ----------
+
+    // Text ohne Zeilenumbrüche/Steuerzeichen, Länge 1..max
+    function validText(v, max) {
+      return v is string && v.size() > 0 && v.size() <= max
+        && !v.matches('(?s).*[\\x00-\\x1F\\x7F].*');
+    }
+
+    function validDate(v) {
+      return v is string && v.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');
+    }
+
+    // Beträge in Cent als ganze Zahl (max. 100.000 €)
+    function validCents(v) {
+      return v is int && v > 0 && v <= 10000000;
+    }
+
+    function validShares(v) {
+      return v is map && v.size() > 0 && v.size() <= 100;
+    }
+
+    function optional(d, key) {
+      return !(key in d);
     }
 
     // ---------- Benutzerprofile ----------
     match /users/{uid} {
-      // Jeder sieht nur sein eigenes Profil; der Master sieht alle
-      // (fuer die Freischaltung neuer Konten).
       allow get: if signedIn() && (request.auth.uid == uid || isMaster());
       allow list: if isMaster();
-      // Neue Konten starten IMMER als "nicht freigeschaltet".
-      // Der Master darf Konten (Profile) auch direkt anlegen.
+
+      // Neue Konten starten IMMER gesperrt, nur mit den nötigen Feldern,
+      // und mit der E-Mail-Adresse, mit der sie tatsächlich angemeldet sind.
       allow create: if isMaster()
         || (signedIn() && request.auth.uid == uid
-            && request.resource.data.approved == false);
-      // Nur der Master darf das Feld 'approved' aendern.
+            && request.resource.data.keys().hasOnly(['name', 'email', 'teams', 'approved', 'createdAt'])
+            && request.resource.data.approved == false
+            && validText(request.resource.data.name, 60)
+            && request.resource.data.email is string
+            && request.resource.data.email.lower() == request.auth.token.email.lower()
+            && request.resource.data.teams is list
+            && request.resource.data.teams.size() == 0
+            && request.resource.data.createdAt == request.time);
+
+      // Selbst: nur Anzeigename und eigene Teamliste.
+      // Freischalten/Sperren/E-Mail darf nur der Master.
       allow update: if isMaster()
         || (signedIn() && request.auth.uid == uid
-            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved']));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'teams'])
+            && validText(request.resource.data.name, 60)
+            && request.resource.data.teams is list
+            && request.resource.data.teams.size() <= 50);
+
       allow delete: if isMaster();
     }
 
-    // ---------- Passwort-vergessen-Anfragen ----------
-    // Darf ohne Anmeldung erstellt werden (die Person kommt ja nicht rein).
-    // Nur der Master kann die Anfragen sehen und freigeben.
+    // ---------- Alte Passwort-Anfragen ----------
+    // Die App sendet Zurücksetzungs-E-Mails inzwischen direkt. Anonymes
+    // Anlegen ist deshalb gesperrt (verhindert Spam ohne Anmeldung);
+    // der Master kann alte Einträge noch sehen und aufräumen.
     match /pwResets/{resetId} {
-      allow create: if request.resource.data.keys().hasOnly(['email', 'requestedAt', 'status'])
-        && request.resource.data.status == 'open'
-        && request.resource.data.email is string
-        && request.resource.data.email.size() > 4
-        && request.resource.data.email.size() < 200;
+      allow create: if false;
       allow read, update, delete: if isMaster();
     }
 
     // ---------- Teams ----------
     match /teams/{teamId} {
-      // Einzelabruf erlaubt (noetig, um per Einladungscode beizutreten).
-      // Abfragen/Auflisten aller Teams ist NICHT erlaubt.
+      // Einzelabruf für freigeschaltete Konten (Beitritt per Code).
+      // Auflisten aller Teams ist NICHT erlaubt.
       allow get: if isApproved();
       allow list: if false;
+
       // Neue Teams darf nur der Master erstellen.
       allow create: if isMaster()
-        && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if isOwner(teamId);
+        && teamId.matches('[A-Z0-9]{4,12}')
+        && request.resource.data.keys().hasOnly(['name', 'ownerUid', 'createdBy', 'createdAt'])
+        && validText(request.resource.data.name, 80)
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+
+      // Besitzer: nur Name und Statistik-Einstellungen änderbar
+      // (ownerUid/createdBy bleiben fest).
+      allow update: if isOwner(teamId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'statsConfig'])
+        && validText(request.resource.data.name, 80)
+        && (optional(request.resource.data, 'statsConfig') || request.resource.data.statsConfig is map);
+
       allow delete: if isOwner(teamId);
 
       // ---------- Mitglieder ----------
       match /members/{uid} {
+
+        function validMember(d) {
+          return d.keys().hasOnly(['name', 'role', 'active', 'joinedAt', 'startDate', 'removedAt',
+                                   'paypal', 'iban', 'payName', 'payUpdatedBy', 'payUpdatedAt'])
+            && validText(d.name, 60)
+            && d.role in ['owner', 'admin', 'user']
+            && d.active is bool
+            && (optional(d, 'startDate') || validDate(d.startDate))
+            && (optional(d, 'paypal') || (d.paypal is string && d.paypal.matches('[A-Za-z0-9]{0,20}')))
+            && (optional(d, 'iban') || (d.iban is string && d.iban.matches('[A-Z0-9]{0,34}')))
+            && (optional(d, 'payName') || d.payName == '' || validText(d.payName, 70));
+        }
+
+        // Wer Zahlungsdaten (PayPal, IBAN, Kontoinhaber) ändert, muss sich
+        // dabei eintragen – so ist eine Umleitung von Zahlungen sichtbar.
+        function payChangeTracked() {
+          return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['paypal', 'iban', 'payName'])
+            || (request.resource.data.payUpdatedBy == request.auth.uid
+                && request.resource.data.payUpdatedAt == request.time);
+        }
+
         allow read: if signedIn()
           && (request.auth.uid == uid || isMember(teamId));
-        // Selbst beitreten (nur als einfacher User), durch Admin/Besitzer,
-        // oder: der Team-Ersteller legt sich selbst als 'owner' an.
-        allow create: if isApproved() && (
-          (request.auth.uid == uid && request.resource.data.role == 'user')
-          || isAdmin(teamId)
+
+        allow create: if isApproved() && validMember(request.resource.data) && (
+          // Selbst per Einladungscode beitreten – nur als einfacher User
+          (request.auth.uid == uid
+            && exists(teamPath(teamId))
+            && request.resource.data.keys().hasOnly(['name', 'role', 'active', 'joinedAt', 'startDate'])
+            && request.resource.data.role == 'user'
+            && request.resource.data.active == true
+            && request.resource.data.joinedAt == request.time)
+          // Team-Ersteller legt sich selbst als Besitzer an
           || (request.auth.uid == uid
               && request.resource.data.role == 'owner'
-              && get(/databases/$(database)/documents/teams/$(teamId)).data.ownerUid == request.auth.uid)
+              && get(teamPath(teamId)).data.ownerUid == request.auth.uid)
+          // Besitzer nimmt User oder Admins auf
+          || (isOwner(teamId) && request.resource.data.role in ['user', 'admin'])
+          // Admin nimmt einfache User auf
+          || (isAdmin(teamId) && request.resource.data.role == 'user')
         );
-        // Admin/Besitzer verwalten Mitglieder; die Rolle 'owner'
-        // darf nur der Besitzer (owner) selbst vergeben/aendern.
-        // Jeder darf seinen eigenen Anzeigenamen und seine
-        // Zahlungsdaten (PayPal, IBAN, Kontoinhaber) im Team aendern.
-        allow update: if signedIn() && (
-          (isAdmin(teamId)
-            && resource.data.role != 'owner'
-            && request.resource.data.role != 'owner')
-          || isOwner(teamId)
+
+        allow update: if isApproved() && validMember(request.resource.data) && payChangeTracked() && (
+          // Besitzer verwaltet alle Mitglieder (inkl. Rollen)
+          isOwner(teamId)
+          // Admin verwaltet nur einfache User – Rollen bleiben unverändert
+          || (isAdmin(teamId)
+              && resource.data.role == 'user'
+              && request.resource.data.role == 'user'
+              && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['active', 'removedAt', 'startDate', 'paypal', 'iban', 'payName', 'payUpdatedBy', 'payUpdatedAt']))
+          // Jeder: eigener Anzeigename und eigene Zahlungsdaten
           || (request.auth.uid == uid
               && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['name', 'paypal', 'iban', 'payName']))
+                 .hasOnly(['name', 'paypal', 'iban', 'payName', 'payUpdatedBy', 'payUpdatedAt']))
         );
-        allow delete: if signedIn() && (
-          (isAdmin(teamId) && resource.data.role != 'owner')
-          || (request.auth.uid == uid && resource.data.role != 'owner')
-          || isOwner(teamId)
+
+        allow delete: if isApproved() && (
+          isOwner(teamId)
+          || (isAdmin(teamId) && resource.data.role == 'user')
+          // Team verlassen: nur als aktives Mitglied (Entfernte können
+          // ihren Eintrag nicht löschen, um sich wieder einzuschleichen)
+          || (request.auth.uid == uid && resource.data.role != 'owner' && resource.data.active == true)
         );
       }
 
       // ---------- Ausgaben ----------
       match /expenses/{expenseId} {
+
+        function validExpense(d) {
+          return d.keys().hasOnly(['type', 'title', 'amount', 'date', 'paidBy', 'shares', 'createdBy', 'createdAt'])
+            && d.type == 'expense'
+            && validText(d.title, 120)
+            && validCents(d.amount)
+            && validDate(d.date)
+            && d.paidBy is string
+            && exists(memberPath(teamId, d.paidBy))
+            && validShares(d.shares);
+        }
+
+        // Verrechnung beim Entfernen eines Mitglieds (Saldo darf +/- sein)
+        function validAdjustment(d) {
+          return d.keys().hasOnly(['type', 'title', 'targetUid', 'amount', 'shares', 'date', 'createdBy', 'createdAt'])
+            && d.type == 'adjustment'
+            && validText(d.title, 120)
+            && d.amount is int && d.amount != 0 && math.abs(d.amount) <= 1000000000
+            && validDate(d.date)
+            && d.targetUid is string
+            && exists(memberPath(teamId, d.targetUid))
+            && validShares(d.shares);
+        }
+
         allow read: if isMember(teamId);
-        // Jedes Mitglied darf eigene Ausgaben anlegen.
-        // Verrechnungen (type 'adjustment', z.B. beim Entfernen
-        // eines Mitglieds) darf nur Admin/Besitzer anlegen.
+
         allow create: if isMember(teamId)
           && request.resource.data.createdBy == request.auth.uid
-          && (request.resource.data.type == 'expense' || isAdmin(teamId));
-        // Eigene Ausgaben aendern/loeschen; Admin/Besitzer alle.
-        allow update, delete: if isMember(teamId)
+          && request.resource.data.createdAt == request.time
+          && (validExpense(request.resource.data)
+              || (isAdmin(teamId) && validAdjustment(request.resource.data)));
+
+        // Eigene Ausgaben ändern; Admin/Besitzer alle. Ersteller, Zeitpunkt
+        // und Art (Ausgabe/Verrechnung) bleiben immer unverändert.
+        allow update: if isMember(teamId)
+          && (resource.data.createdBy == request.auth.uid || isAdmin(teamId))
+          && request.resource.data.createdBy == resource.data.createdBy
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.type == resource.data.type
+          && (validExpense(request.resource.data)
+              || (isAdmin(teamId) && validAdjustment(request.resource.data)));
+
+        allow delete: if isMember(teamId)
           && (resource.data.createdBy == request.auth.uid || isAdmin(teamId));
       }
 
-      // ---------- Presets / Gruppen (z.B. "Team Milch") ----------
+      // ---------- Presets / Gruppen (z. B. "Team Milch") ----------
       match /presets/{presetId} {
+        function validPreset(d) {
+          return d.keys().hasOnly(['name', 'shares'])
+            && validText(d.name, 60)
+            && validShares(d.shares);
+        }
         allow read: if isMember(teamId);
-        allow create, update, delete: if isAdmin(teamId);
+        allow create, update: if isAdmin(teamId) && validPreset(request.resource.data);
+        allow delete: if isAdmin(teamId);
       }
 
       // ---------- Zahlungserinnerungen (In-App) ----------
-      // Der Glaeubiger (from) erinnert den Schuldner (to). Loeschen darf
-      // der Glaeubiger (zuruecknehmen) oder der Schuldner (erledigt).
+      // Der Gläubiger (from) erinnert den Schuldner (to). Pro Paar genau
+      // ein Eintrag mit der ID "<from>_<to>"; nur der Gläubiger selbst
+      // darf ihn anlegen/ändern.
       match /reminders/{reminderId} {
+        function validReminder(d) {
+          return d.keys().hasOnly(['from', 'to', 'amount', 'createdAt', 'count'])
+            && d.from == request.auth.uid
+            && d.to is string && d.to != d.from
+            && reminderId == d.from + '_' + d.to
+            && isActiveMember(teamId, d.to)
+            && validCents(d.amount)
+            && d.count is int && d.count >= 1 && d.count <= 1000
+            && d.createdAt == request.time;
+        }
         allow read: if isMember(teamId);
-        allow create, update: if isMember(teamId)
-          && request.resource.data.from == request.auth.uid;
+        allow create: if isMember(teamId) && validReminder(request.resource.data);
+        allow update: if isMember(teamId)
+          && resource.data.from == request.auth.uid
+          && validReminder(request.resource.data);
         allow delete: if isMember(teamId)
           && (resource.data.from == request.auth.uid
-              || resource.data.to == request.auth.uid);
+              || resource.data.to == request.auth.uid
+              || isOwner(teamId));
       }
 
       // ---------- Ausgleichszahlungen ----------
       match /settlements/{settlementId} {
+
+        function validSettlement(d) {
+          return d.keys().hasOnly(['from', 'to', 'amount', 'status', 'createdBy', 'createdAt', 'confirmedAt', 'note'])
+            && d.from is string && d.to is string && d.from != d.to
+            && validCents(d.amount)
+            && d.status in ['pending', 'confirmed']
+            && (optional(d, 'confirmedAt') || d.confirmedAt == null || d.confirmedAt is timestamp)
+            && (optional(d, 'note') || (d.note is string && d.note.size() <= 200));
+        }
+
         allow read: if isMember(teamId);
-        // Zahler meldet "bezahlt" (pending) ODER Empfaenger
-        // bestaetigt direkt selbst (confirmed). Admin/Besitzer duerfen
-        // ausserdem Zahlungen zwischen beliebigen Personen erfassen.
-        allow create: if isMember(teamId) && (
-          (request.resource.data.status == 'pending'
-            && request.resource.data.from == request.auth.uid)
-          || (request.resource.data.status == 'confirmed'
-            && request.resource.data.to == request.auth.uid)
-          || isAdmin(teamId)
-        );
-        // Der Empfaenger darf eine offene Zahlung bestaetigen;
-        // Admin/Besitzer duerfen Zahlungen bearbeiten (Betrag, Status).
-        allow update: if isMember(teamId) && (
-          (request.auth.uid == resource.data.to
-            && resource.data.status == 'pending'
-            && request.resource.data.status == 'confirmed'
-            && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['amount', 'status', 'confirmedAt']))
-          || (isAdmin(teamId)
-              && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['amount', 'status', 'confirmedAt', 'note']))
-        );
-        // Zahler darf eigene offene Meldung zurueckziehen; Admin darf loeschen.
+
+        // Zahler meldet "bezahlt" (offen) ODER Empfänger verbucht den
+        // Erhalt direkt. Admin/Besitzer dürfen Zahlungen zwischen
+        // beliebigen Mitgliedern erfassen.
+        allow create: if isMember(teamId)
+          && validSettlement(request.resource.data)
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && exists(memberPath(teamId, request.resource.data.from))
+          && exists(memberPath(teamId, request.resource.data.to))
+          && ((request.resource.data.status == 'pending'
+                && optional(request.resource.data, 'confirmedAt'))
+              || (request.resource.data.status == 'confirmed'
+                && request.resource.data.confirmedAt == request.time))
+          && ((request.resource.data.status == 'pending'
+                && request.resource.data.from == request.auth.uid)
+              || (request.resource.data.status == 'confirmed'
+                && request.resource.data.to == request.auth.uid)
+              || isAdmin(teamId));
+
+        // Der Empfänger bestätigt eine offene Zahlung (Betrag anpassbar);
+        // Admin/Besitzer dürfen Betrag und Status korrigieren.
+        allow update: if isMember(teamId)
+          && validSettlement(request.resource.data)
+          && ((request.auth.uid == resource.data.to
+                && resource.data.status == 'pending'
+                && request.resource.data.status == 'confirmed'
+                && request.resource.data.confirmedAt == request.time
+                && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['amount', 'status', 'confirmedAt']))
+              || (isAdmin(teamId)
+                && request.resource.data.diff(resource.data).affectedKeys()
+                   .hasOnly(['amount', 'status', 'confirmedAt', 'note'])));
+
+        // Zahler zieht eigene offene Meldung zurück; Admin darf löschen.
         allow delete: if isMember(teamId) && (
           (resource.data.status == 'pending' && resource.data.from == request.auth.uid)
           || isAdmin(teamId)

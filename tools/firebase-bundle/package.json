@@ -1,0 +1,16 @@
+{
+  "name": "kaffeekasse-firebase-bundle",
+  "private": true,
+  "description": "Baut js/vendor/firebase.js – das lokal gehostete Firebase-SDK der App. Nur für Entwickler, wird NICHT ausgeliefert.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --format=esm --minify --target=es2020 --legal-comments=eof --outfile=../../js/vendor/firebase.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "firebase": "12.19.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.5"
+  }
+}

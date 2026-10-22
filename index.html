@@ -2,6 +2,10 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
+  <!-- Sicherheit: Nur eigener Code darf ausgeführt werden; Verbindungen nur
+       zu Firebase. Schützt zusätzlich gegen eingeschleusten Schadcode (XSS). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com; worker-src 'self'; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
   <title>Kaffeekasse</title>
   <meta name="description" content="Kaffeekasse – Ausgaben im Team fair teilen">
@@ -43,15 +47,15 @@
       <form id="auth-form" class="stack">
         <div class="field hidden" id="auth-name-field">
           <label for="auth-name">Dein Name</label>
-          <input type="text" id="auth-name" placeholder="z. B. Max" autocomplete="name">
+          <input type="text" id="auth-name" placeholder="z. B. Max" autocomplete="name" maxlength="60">
         </div>
         <div class="field">
           <label for="auth-email">E-Mail</label>
-          <input type="email" id="auth-email" placeholder="name@firma.de" autocomplete="email" required>
+          <input type="email" id="auth-email" placeholder="name@firma.de" autocomplete="email" maxlength="200" required>
         </div>
         <div class="field">
           <label for="auth-password">Passwort</label>
-          <input type="password" id="auth-password" placeholder="Mindestens 6 Zeichen" autocomplete="current-password" required>
+          <input type="password" id="auth-password" placeholder="Mindestens 8 Zeichen" autocomplete="current-password" maxlength="200" required>
         </div>
         <p id="auth-error" class="error-text hidden"></p>
         <button type="submit" class="btn btn-primary" id="auth-submit">Anmelden</button>
@@ -69,7 +73,7 @@
       <div class="stack hidden" id="reset-form">
         <div class="field">
           <label for="reset-pass1">Neues Passwort</label>
-          <input type="password" id="reset-pass1" placeholder="Mindestens 6 Zeichen" autocomplete="new-password">
+          <input type="password" id="reset-pass1" placeholder="Mindestens 8 Zeichen" autocomplete="new-password" maxlength="200">
         </div>
         <div class="field">
           <label for="reset-pass2">Passwort wiederholen</label>
@@ -117,14 +121,14 @@
         <div id="create-team-section" class="stack hidden">
           <div class="field">
             <label for="new-team-name">Neues Team erstellen</label>
-            <input type="text" id="new-team-name" placeholder="z. B. Kaffeekasse Büro 3">
+            <input type="text" id="new-team-name" placeholder="z. B. Kaffeekasse Büro 3" maxlength="80">
           </div>
           <button class="btn btn-primary" id="btn-create-team">Team erstellen</button>
           <div class="divider"><span>oder</span></div>
         </div>
         <div class="field">
           <label for="join-code">Mit Einladungscode beitreten</label>
-          <input type="text" id="join-code" placeholder="z. B. K7F3QX" autocapitalize="characters">
+          <input type="text" id="join-code" placeholder="z. B. K7F3QX9M" autocapitalize="characters" maxlength="12" autocomplete="off">
         </div>
         <button class="btn btn-secondary" id="btn-join-team">Team beitreten</button>
         <button class="btn btn-secondary hidden" id="noteam-master"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.7 2.7M13.3 9.7l2 2"/></svg> Benutzerverwaltung</button>

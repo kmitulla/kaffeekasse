@@ -52,6 +52,10 @@ export function validIban(iban) {
 // EPC-QR-Code-Inhalt (EPC069-12, Version 002, UTF-8, SEPA-Überweisung).
 // Banking-App scannt: Name, IBAN, Betrag und Verwendungszweck sind
 // automatisch ausgefüllt. (Ein Datum sieht der Standard nicht vor.)
+// Zeilenumbrüche/Steuerzeichen entfernen: Jede Zeile ist ein eigenes
+// Feld – ein Umbruch im Namen könnte sonst z. B. die IBAN verschieben.
+const epcField = (s, max) => String(s || "").replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, max);
+
 export function epcQrData({ name, iban, cents, remittance }) {
   return [
     "BCD",                                  // Service-Tag
@@ -59,12 +63,12 @@ export function epcQrData({ name, iban, cents, remittance }) {
     "1",                                    // Zeichensatz: UTF-8
     "SCT",                                  // SEPA Credit Transfer
     "",                                     // BIC (bei 002 nicht nötig)
-    (name || "").slice(0, 70),              // Empfänger
+    epcField(name, 70),                     // Empfänger
     normalizeIban(iban),                    // IBAN
     `EUR${(cents / 100).toFixed(2)}`,       // Betrag
     "",                                     // Purpose-Code
     "",                                     // strukturierte Referenz
-    (remittance || "").slice(0, 140)        // Verwendungszweck
+    epcField(remittance, 140)               // Verwendungszweck
   ].join("\n");
 }
 

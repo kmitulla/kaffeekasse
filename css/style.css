@@ -499,3 +499,15 @@ a.btn { text-decoration: none; }
   .sync-pill #sync-label { display: none; } /* nur der Status-Punkt; Antippen zeigt Details */
   .avatar-btn { width: 36px; height: 36px; }
 }
+
+/* Warnung, wenn Zahlungsdaten von jemand anderem eingetragen wurden */
+.pay-warning {
+  margin: 10px 0 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text);
+  background: rgba(244, 162, 89, 0.14);
+  border: 1px solid rgba(244, 162, 89, 0.45);
+}

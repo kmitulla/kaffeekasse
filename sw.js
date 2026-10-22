@@ -1,6 +1,6 @@
 // Service Worker – macht die App offline nutzbar (App-Hülle wird gecacht,
 // die Daten selbst cached Firestore separat).
-const CACHE = "kaffeekasse-v9";
+const CACHE = "kaffeekasse-v10";
 
 const APP_SHELL = [
   "./",
@@ -8,6 +8,7 @@ const APP_SHELL = [
   "./css/style.css",
   "./js/app.js",
   "./js/firebase.js",
+  "./js/vendor/firebase.js",
   "./js/firebase-config.js",
   "./js/balance.js",
   "./js/export.js",
@@ -36,36 +37,25 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  const url = new URL(event.request.url);
-  if (event.request.method !== "GET") return;
+  const req = event.request;
+  const url = new URL(req.url);
+  // Nur eigene Dateien per GET – Firebase-Verbindungen (Daten, Anmeldung)
+  // werden nie abgefangen oder zwischengespeichert.
+  if (req.method !== "GET" || url.origin !== location.origin) return;
 
-  // Firebase SDK vom CDN: einmal laden, dann dauerhaft aus dem Cache
-  if (url.hostname === "www.gstatic.com") {
-    event.respondWith(
-      caches.match(event.request).then((hit) =>
-        hit || fetch(event.request).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(event.request, copy));
-          return res;
-        })
-      )
-    );
-    return;
-  }
+  // Seitenaufrufe immer unter der festen App-Adresse cachen – nie mit
+  // Parametern (z. B. dem geheimen Einmal-Code aus Passwort-E-Mails).
+  const cacheKey = req.mode === "navigate" ? "./index.html" : url.pathname;
 
-  // Firestore/Auth-Traffic nie abfangen
-  if (url.hostname.endsWith("googleapis.com") || url.hostname.endsWith("firebaseapp.com")) return;
-
-  // Eigene Dateien: Netz zuerst (damit Updates ankommen), sonst Cache
-  if (url.origin === location.origin) {
-    event.respondWith(
-      fetch(event.request).then((res) => {
+  event.respondWith(
+    fetch(req).then((res) => {
+      if (res.ok && res.type === "basic") {
         const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(event.request, copy));
-        return res;
-      }).catch(() =>
-        caches.match(event.request).then((hit) => hit || caches.match("./index.html"))
-      )
-    );
-  }
+        caches.open(CACHE).then((c) => c.put(cacheKey, copy));
+      }
+      return res;
+    }).catch(() =>
+      caches.match(cacheKey).then((hit) => hit || caches.match("./index.html"))
+    )
+  );
 });

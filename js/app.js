@@ -5,7 +5,7 @@ import {
   auth, db,
   onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword,
   sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset,
-  updateProfile, signOut,
+  updateProfile, signOutAndClear,
   doc, collection, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, arrayUnion, arrayRemove,
   secondaryCreateUser
@@ -51,6 +51,61 @@ const state = {
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Für Werte in CSS-Selektoren (querySelector)
+const cssq = (s) => (window.CSS && CSS.escape) ? CSS.escape(String(s)) : String(s).replace(/[^\w-]/g, "\\$&");
+
+// Clickjacking-Schutz: Die App darf nicht unsichtbar in fremde Seiten
+// eingebettet werden (GitHub Pages kann dafür keinen Header setzen).
+if (window.top !== window.self) {
+  document.documentElement.style.display = "none";
+  try { window.top.location.replace(window.location.href); } catch { /* blockiert – bleibt unsichtbar */ }
+  throw new Error("Eingebettet – abgebrochen");
+}
+
+// ---------------------------------------------------------
+// Daten aus der Datenbank nur in erwarteter Form übernehmen. Defekte
+// oder manipulierte Einträge werden verworfen, statt die Anzeige zu
+// stören oder Salden zu verfälschen (zusätzlich zu den Firestore-Regeln).
+// ---------------------------------------------------------
+const isStr = (v, max = 200) => typeof v === "string" && v.length <= max;
+const isIsoDate = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isCents = (v) => Number.isSafeInteger(v) && v > 0 && v <= 10000000;
+function validSharesObj(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return false;
+  const vals = Object.values(s);
+  if (!vals.length || vals.length > 100) return false;
+  if (!vals.every(v => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100)) return false;
+  return Math.abs(vals.reduce((a, b) => a + b, 0) - 100) < 0.05;
+}
+function cleanExpense(e) {
+  if (!isStr(e.title, 120) || !isIsoDate(e.date) || !validSharesObj(e.shares)) return null;
+  if (e.type === "adjustment") {
+    return Number.isSafeInteger(e.amount) && e.amount !== 0 && isStr(e.targetUid) ? e : null;
+  }
+  return e.type === "expense" && isCents(e.amount) && isStr(e.paidBy) ? e : null;
+}
+function cleanSettlement(s) {
+  return isStr(s.from) && isStr(s.to) && s.from !== s.to && isCents(s.amount)
+    && (s.status === "pending" || s.status === "confirmed") ? s : null;
+}
+function cleanReminder(r) {
+  return isStr(r.from) && isStr(r.to) && isCents(r.amount)
+    && Number.isSafeInteger(r.count) && r.count > 0 ? r : null;
+}
+function cleanPreset(p) {
+  return isStr(p.name, 60) && validSharesObj(p.shares) ? p : null;
+}
+function cleanMember(m) {
+  return {
+    ...m,
+    name: isStr(m.name, 60) && m.name ? m.name : "Unbekannt",
+    role: ["owner", "admin", "user"].includes(m.role) ? m.role : "user",
+    startDate: isIsoDate(m.startDate) ? m.startDate : "",
+    paypal: isStr(m.paypal, 20) ? m.paypal : "",
+    iban: isStr(m.iban, 34) ? m.iban : "",
+    payName: isStr(m.payName, 70) ? m.payName : ""
+  };
+}
 
 const ROLE_LABEL = { owner: "Besitzer", admin: "Admin", user: "User" };
 const ROLE_BADGE = { owner: "badge-owner", admin: "badge-admin", user: "badge-user" };
@@ -85,7 +140,7 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function fmtDate(iso) {
-  if (!iso) return "";
+  if (!isIsoDate(iso)) return "";
   const [y, m, d] = iso.split("-");
   return `${d}.${m}.${y}`;
 }
@@ -252,7 +307,8 @@ function authErrorText(err) {
   if (c.includes("invalid-credential") || c.includes("wrong-password") || c.includes("user-not-found"))
     return "E-Mail oder Passwort ist falsch.";
   if (c.includes("email-already-in-use")) return "Diese E-Mail ist bereits registriert.";
-  if (c.includes("weak-password")) return "Das Passwort muss mindestens 6 Zeichen haben.";
+  if (c.includes("weak-password") || c.includes("password-does-not-meet-requirements"))
+    return "Das Passwort ist zu schwach – bitte mindestens 8 Zeichen verwenden.";
   if (c.includes("invalid-email")) return "Bitte eine gültige E-Mail-Adresse eingeben.";
   if (c.includes("too-many-requests")) return "Zu viele Versuche – bitte kurz warten.";
   if (c.includes("network")) return "Keine Internetverbindung.";
@@ -268,13 +324,17 @@ $("auth-form").addEventListener("submit", async (e) => {
   $("auth-submit").disabled = true;
   try {
     if (authMode === "register") {
-      const name = $("auth-name").value.trim();
+      const name = $("auth-name").value.trim().slice(0, 60);
       if (!name) throw { code: "custom", message: "Bitte gib deinen Namen ein." };
+      if (pass.length < MIN_PASSWORD) throw { code: "custom", message: `Das Passwort braucht mindestens ${MIN_PASSWORD} Zeichen.` };
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       await updateProfile(cred.user, { displayName: name });
-      const isMaster = email.toLowerCase() === MASTER_EMAIL.toLowerCase();
+      // Die E-Mail aus dem Konto verwenden (nicht die Eingabe) – die
+      // Sicherheitsregeln prüfen genau diese.
+      const realEmail = cred.user.email;
+      const isMaster = realEmail.toLowerCase() === MASTER_EMAIL.toLowerCase();
       await setDoc(doc(db, "users", cred.user.uid), {
-        name, email, teams: [], approved: isMaster, createdAt: serverTimestamp()
+        name, email: realEmail, teams: [], approved: isMaster, createdAt: serverTimestamp()
       });
     } else {
       await signInWithEmailAndPassword(auth, email, pass);
@@ -297,30 +357,40 @@ $("auth-forgot").addEventListener("click", async (e) => {
   if (!lockOnce(e.currentTarget)) return;
   try {
     await sendResetMail(email);
-    toast("E-Mail ist unterwegs! Öffne den Link aus der NEUESTEN E-Mail und lege dein neues Passwort fest.");
+    toast(RESET_SENT_MSG);
   } catch (err) {
-    console.error(err);
-    const c = err?.code || "";
-    if (c.includes("user-not-found")) toast("Zu dieser E-Mail gibt es kein Konto.");
-    else if (c.includes("too-many-requests")) toast("Zu viele Versuche – bitte in ein paar Minuten erneut.");
-    else toast("E-Mail konnte nicht gesendet werden.");
+    resetMailErrorToast(err);
   }
 });
 
-$("noteam-signout").addEventListener("click", () => signOut(auth));
+$("noteam-signout").addEventListener("click", () => signOutAndClear());
 $("noteam-back").addEventListener("click", () => showView("app"));
-$("pending-signout").addEventListener("click", () => signOut(auth));
+$("pending-signout").addEventListener("click", () => signOutAndClear());
 
 // ---------------------------------------------------------
 // Master: Konten freischalten
 // ---------------------------------------------------------
 function pendingUsers() {
-  return state.allUsers.filter(u =>
-    u.approved !== true && (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase());
+  return state.allUsers.filter(u => u.approved !== true && u.uid !== state.user?.uid);
 }
 
 function openResets() {
   return state.pwResets.filter(r => r.status === "open");
+}
+
+const MIN_PASSWORD = 8;
+
+// Gleiche Meldung, egal ob es zur E-Mail ein Konto gibt – sonst könnte
+// man über dieses Formular ausprobieren, wer ein Konto hat.
+const RESET_SENT_MSG = "Falls es zu dieser E-Mail ein Konto gibt, ist jetzt eine E-Mail unterwegs. "
+  + "Öffne den Link aus der NEUESTEN E-Mail und lege dein neues Passwort fest.";
+function resetMailErrorToast(err) {
+  const c = err?.code || "";
+  if (c.includes("user-not-found")) { toast(RESET_SENT_MSG); return; }
+  console.error(err);
+  if (c.includes("too-many-requests")) toast("Zu viele Versuche – bitte in ein paar Minuten erneut.");
+  else if (c.includes("invalid-email")) toast("Bitte eine gültige E-Mail-Adresse eingeben.");
+  else toast("E-Mail konnte nicht gesendet werden.");
 }
 
 // Zurücksetzungs-E-Mail senden – mit Rücksprung-Link zur App.
@@ -458,7 +528,7 @@ function renderUserAdminList() {
     }));
 
   const users = state.allUsers
-    .filter(u => (u.email || "").toLowerCase() !== MASTER_EMAIL.toLowerCase())
+    .filter(u => u.uid !== state.user?.uid)
     .filter(u => !uaState.search
       || (u.name || "").toLowerCase().includes(uaState.search)
       || (u.email || "").toLowerCase().includes(uaState.search))
@@ -470,9 +540,9 @@ function renderUserAdminList() {
     const st = UA_STATUS[userStatus(u)];
     const lines = [
       esc(u.email || ""),
-      `Registriert: ${fmtDateTime(u.createdAt) || "–"}`,
-      u.approvedAt ? `Freigeschaltet: ${fmtDateTime(u.approvedAt)}` : "",
-      u.blockedAt && u.approved !== true ? `Gesperrt: ${fmtDateTime(u.blockedAt)}` : ""
+      `Registriert: ${esc(fmtDateTime(u.createdAt) || "–")}`,
+      u.approvedAt ? `Freigeschaltet: ${esc(fmtDateTime(u.approvedAt))}` : "",
+      u.blockedAt && u.approved !== true ? `Gesperrt: ${esc(fmtDateTime(u.blockedAt))}` : ""
     ].filter(Boolean).join("<br>");
     return `
       <div class="list-item compact tappable" data-detail="${esc(u.uid)}">
@@ -552,7 +622,7 @@ async function openUserDetailModal(uid) {
           <div class="item-icon">${t.member?.active === false ? icon("personOut") : icon("people")}</div>
           <div class="item-main">
             <div class="item-title">${esc(t.name)}</div>
-            <div class="item-sub">${t.member ? (t.member.active === false ? "Entfernt" : ROLE_LABEL[t.member.role] || t.member.role) : "Kein Mitgliedseintrag"}</div>
+            <div class="item-sub">${t.member ? (t.member.active === false ? "Entfernt" : ROLE_LABEL[t.member.role] || "User") : "Kein Mitgliedseintrag"}</div>
           </div>
           ${t.member && t.member.role !== "owner" && t.member.active !== false ? `
             <div style="display:flex;flex-direction:column;gap:5px">
@@ -629,15 +699,15 @@ function openCreateUserModal() {
     <div class="stack">
       <div class="field">
         <label>Name</label>
-        <input type="text" id="cu-name" placeholder="z. B. Max">
+        <input type="text" id="cu-name" placeholder="z. B. Max" maxlength="60">
       </div>
       <div class="field">
         <label>E-Mail</label>
-        <input type="email" id="cu-email" placeholder="name@firma.de">
+        <input type="email" id="cu-email" placeholder="name@firma.de" maxlength="200">
       </div>
       <div class="field">
         <label>Passwort (optional)</label>
-        <input type="text" id="cu-pass" placeholder="Leer lassen: Person legt es per E-Mail selbst fest">
+        <input type="text" id="cu-pass" placeholder="Leer lassen: Person legt es per E-Mail selbst fest" maxlength="200" autocomplete="new-password">
       </div>
       ${myTeams.length ? `
       <div class="field">
@@ -663,7 +733,7 @@ function openCreateUserModal() {
   (async () => {
     for (const t of myTeams) {
       const name = await getTeamName(t);
-      const opt = $("cu-team")?.querySelector(`option[value="${t}"]`);
+      const opt = $("cu-team")?.querySelector(`option[value="${cssq(t)}"]`);
       if (opt) opt.textContent = name;
     }
   })();
@@ -676,12 +746,11 @@ function openCreateUserModal() {
     const role = $("cu-role")?.value || "user";
     if (!name) { toast("Bitte einen Namen eingeben."); return; }
     if (!email.includes("@")) { toast("Bitte eine gültige E-Mail eingeben."); return; }
-    if (pass && pass.length < 6) { toast("Das Passwort braucht mindestens 6 Zeichen."); return; }
+    if (pass && pass.length < MIN_PASSWORD) { toast(`Das Passwort braucht mindestens ${MIN_PASSWORD} Zeichen.`); return; }
     $("cu-save").disabled = true;
     try {
       // Ohne Passwort: Zufallspasswort + E-Mail zum Selbst-Festlegen
-      const pw = pass || Array.from(crypto.getRandomValues(new Uint8Array(18)),
-        b => "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"[b % 54]).join("");
+      const pw = pass || randomString("ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789", 24);
       const uid = await secondaryCreateUser(email, pw);
       await setDoc(doc(db, "users", uid), {
         name, email, teams: team ? [team] : [],
@@ -715,6 +784,9 @@ function openCreateUserModal() {
 // ---------------------------------------------------------
 const urlParams = new URLSearchParams(location.search);
 const resetOobCode = urlParams.get("mode") === "resetPassword" ? urlParams.get("oobCode") : null;
+// Den geheimen Einmal-Code sofort aus Adresszeile und Browser-Verlauf
+// entfernen (er bleibt nur im Speicher dieser Seite).
+if (location.search) history.replaceState(null, "", location.pathname);
 let resetEmail = null;
 
 function resetErrorText(err) {
@@ -752,7 +824,7 @@ $("reset-submit").addEventListener("click", async (e) => {
   const errEl = $("reset-error");
   errEl.classList.add("hidden");
   const fail = (msg) => { errEl.textContent = msg; errEl.classList.remove("hidden"); };
-  if (p1.length < 6) { fail("Das Passwort braucht mindestens 6 Zeichen."); return; }
+  if (p1.length < MIN_PASSWORD) { fail(`Das Passwort braucht mindestens ${MIN_PASSWORD} Zeichen.`); return; }
   if (p1 !== p2) { fail("Die Passwörter stimmen nicht überein."); return; }
   if (!lockOnce(e.currentTarget)) return;
   try {
@@ -776,19 +848,15 @@ $("reset-request-new").addEventListener("click", async (e) => {
   try {
     // Neuen Link direkt senden – ältere Links werden damit ungültig.
     await sendResetMail(email);
-    toast("Neue E-Mail gesendet! Es funktioniert nur der Link aus dieser neuesten E-Mail.");
+    toast(RESET_SENT_MSG);
   } catch (err) {
-    console.error(err);
-    const c = err?.code || "";
-    if (c.includes("user-not-found")) toast("Zu dieser E-Mail gibt es kein Konto.");
-    else if (c.includes("too-many-requests")) toast("Zu viele Versuche – bitte in ein paar Minuten erneut.");
-    else toast("E-Mail konnte nicht gesendet werden.");
+    resetMailErrorToast(err);
   }
 });
 
 $("reset-back").addEventListener("click", () => {
   // Parameter aus der Adresse entfernen und die App normal starten
-  location.href = location.pathname;
+  location.replace(location.pathname);
 });
 
 if (resetOobCode) initResetFlow();
@@ -874,16 +942,27 @@ onAuthStateChanged(auth, async (user) => {
 // ---------------------------------------------------------
 // Team anlegen / beitreten
 // ---------------------------------------------------------
+// Zufällige Zeichen aus `chars` – kryptographisch sicher und ohne
+// Verzerrung (Werte außerhalb eines Vielfachen werden verworfen).
+function randomString(chars, len) {
+  const limit = 256 - (256 % chars.length);
+  let out = "";
+  while (out.length < len) {
+    for (const b of crypto.getRandomValues(new Uint8Array(len * 2))) {
+      if (b < limit && out.length < len) out += chars[b % chars.length];
+    }
+  }
+  return out;
+}
+
 function genCode() {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // ohne I,L,O,0,1
-  let c = "";
-  for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
-  return c;
+  return randomString("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 8); // ohne I,L,O,0,1
 }
 
 async function createTeam(name) {
   const uid = state.user.uid;
-  const code = genCode();
+  let code = genCode();
+  while ((await getDoc(doc(db, "teams", code))).exists()) code = genCode();
   await setDoc(doc(db, "teams", code), {
     name, ownerUid: uid, createdBy: uid, createdAt: serverTimestamp()
   });
@@ -892,8 +971,10 @@ async function createTeam(name) {
     role: "owner", active: true,
     joinedAt: serverTimestamp(), startDate: todayStr()
   });
-  await updateDoc(doc(db, "users", uid), { teams: arrayUnion(code) });
+  // Erst merken, dann Profil ändern – das Profil-Update löst sofort den
+  // Teamwechsel aus und soll dabei schon das neue Team auswählen.
   localStorage.setItem("kk-team", code);
+  await updateDoc(doc(db, "users", uid), { teams: arrayUnion(code) });
   return code;
 }
 
@@ -913,8 +994,10 @@ async function joinTeam(code) {
       joinedAt: serverTimestamp(), startDate: todayStr()
     });
   }
-  await updateDoc(doc(db, "users", uid), { teams: arrayUnion(code) });
+  // Erst merken, dann Profil ändern – das Profil-Update löst sofort den
+  // Teamwechsel aus und soll dabei schon das neue Team auswählen.
   localStorage.setItem("kk-team", code);
+  await updateDoc(doc(db, "users", uid), { teams: arrayUnion(code) });
 }
 
 $("btn-create-team").addEventListener("click", async () => {
@@ -938,7 +1021,7 @@ $("btn-create-team").addEventListener("click", async () => {
 });
 
 $("btn-join-team").addEventListener("click", async () => {
-  const code = $("join-code").value.trim().toUpperCase();
+  const code = $("join-code").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const errEl = $("noteam-error");
   errEl.classList.add("hidden");
   if (code.length < 4) { errEl.textContent = "Bitte einen gültigen Code eingeben."; errEl.classList.remove("hidden"); return; }
@@ -988,7 +1071,7 @@ function attachTeam(teamId) {
 
   state.teamUnsubs.push(onSnapshot(collection(base, "members"), (snap) => {
     const m = {};
-    snap.forEach(d => { m[d.id] = d.data(); });
+    snap.forEach(d => { m[d.id] = cleanMember(d.data()); });
     state.members = m;
     renderAll();
   }, err => console.error("members:", err)));
@@ -999,7 +1082,7 @@ function attachTeam(teamId) {
     (snap) => {
       setPending("expenses", snap.metadata.hasPendingWrites);
       const list = [];
-      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      snap.forEach(d => { const e = cleanExpense({ id: d.id, ...d.data() }); if (e) list.push(e); });
       list.sort((a, b) => b.date === a.date
         ? (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)
         : (b.date > a.date ? 1 : -1));
@@ -1013,7 +1096,7 @@ function attachTeam(teamId) {
     (snap) => {
       setPending("settlements", snap.metadata.hasPendingWrites);
       const list = [];
-      snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+      snap.forEach(d => { const s = cleanSettlement({ id: d.id, ...d.data() }); if (s) list.push(s); });
       list.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       state.settlements = list;
       renderAll();
@@ -1021,7 +1104,7 @@ function attachTeam(teamId) {
 
   state.teamUnsubs.push(onSnapshot(collection(base, "presets"), (snap) => {
     const list = [];
-    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    snap.forEach(d => { const pr = cleanPreset({ id: d.id, ...d.data() }); if (pr) list.push(pr); });
     list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     state.presets = list;
     renderAll();
@@ -1029,7 +1112,7 @@ function attachTeam(teamId) {
 
   state.teamUnsubs.push(onSnapshot(collection(base, "reminders"), (snap) => {
     const list = [];
-    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    snap.forEach(d => { const r = cleanReminder({ id: d.id, ...d.data() }); if (r) list.push(r); });
     state.reminders = list;
     renderAll();
   }, err => console.error("reminders:", err)));
@@ -1091,7 +1174,7 @@ function renderDashboard() {
       <div class="item-icon warn">${icon("clock")}</div>
       <div class="item-main">
         <div class="item-title">${esc(memberNameReal(r.from))} erinnert dich an deine Zahlung</div>
-        <div class="item-sub">${esc(fmtDateTime(r.createdAt) || "gerade eben")}${r.count > 1 ? ` · ${r.count}× erinnert` : ""}</div>
+        <div class="item-sub">${esc(fmtDateTime(r.createdAt) || "gerade eben")}${r.count > 1 ? ` · ${Number(r.count)}× erinnert` : ""}</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
         <span class="item-amount negative">${formatCents(r.owed)}</span>
@@ -1186,9 +1269,12 @@ function renderDashboard() {
 }
 
 // ---------- Diagramme ----------
-const chartCfg = Object.assign(
-  { dim: "person", period: "90" },
-  JSON.parse(localStorage.getItem("kk-chart") || "{}"));
+const chartCfg = { dim: "person", period: "90" };
+try {
+  const saved = JSON.parse(localStorage.getItem("kk-chart") || "{}");
+  if (["person", "cat", "month"].includes(saved.dim)) chartCfg.dim = saved.dim;
+  if (["30", "90", "365", "all"].includes(saved.period)) chartCfg.period = saved.period;
+} catch { /* defekte Einstellung ignorieren */ }
 
 function periodStartDate(period) {
   if (period === "all") return "0000-00-00";
@@ -1585,6 +1671,11 @@ function openSettleModal(kind, otherUid, suggested, opts = {}) {
           <span class="pay-detail-text">IBAN: ${esc(formatIban(payee.iban))}</span>
           <button type="button" class="btn btn-small btn-secondary" id="settle-iban-copy">Kopieren</button>
         </div>` : ""}
+        ${payee.payUpdatedBy && payee.payUpdatedBy !== otherUid ? `
+        <p class="pay-warning">Achtung: Diese Zahlungsdaten hat nicht ${esc(memberNameReal(otherUid))}
+          selbst eingetragen, sondern ${esc(memberNameReal(payee.payUpdatedBy))}
+          (${esc(fmtDateTime(payee.payUpdatedAt) || "Datum unbekannt")}). Im Zweifel kurz
+          bei ${esc(memberNameReal(otherUid))} nachfragen, bevor du Geld überweist.</p>` : ""}
         <div id="settle-qr-wrap" class="hidden">
           <div class="qr-box" id="settle-qr"></div>
           <p class="muted small" style="text-align:center">Mit der Banking-App scannen – Empfänger,
@@ -1919,10 +2010,10 @@ function renderTeam() {
         <div class="item-icon">${inactive ? icon("personOut") : icon("person")}</div>
         <div class="item-main">
           <div class="item-title">${esc(m.name)}${m.uid === state.user.uid ? " (du)" : ""}
-            <span class="badge ${ROLE_BADGE[m.role] || "badge-user"}">${ROLE_LABEL[m.role] || m.role}</span>
+            <span class="badge ${ROLE_BADGE[m.role] || "badge-user"}">${ROLE_LABEL[m.role] || "User"}</span>
             ${inactive ? '<span class="badge badge-user">Entfernt</span>' : ""}
           </div>
-          <div class="item-sub">Dabei seit ${fmtDate(m.startDate)}</div>
+          <div class="item-sub">Dabei seit ${esc(fmtDate(m.startDate) || "–")}</div>
         </div>
         <span class="item-amount ${bal > 0 ? "positive" : bal < 0 ? "negative" : ""}">${(bal > 0 ? "+" : "")}${formatCents(bal).replace("-", "−")}</span>
       </div>`;
@@ -1980,13 +2071,15 @@ function participantPickerHTML(pickId, preselected, customPct, excludeUid) {
         const sel = preselected
           ? preselected[m.uid] !== undefined
           : (!m.startDate || m.startDate <= todayStr());
-        const pct = preselected && preselected[m.uid] !== undefined ? preselected[m.uid] : "";
+        const raw = preselected && preselected[m.uid] !== undefined ? Number(preselected[m.uid]) : NaN;
+        const pct = Number.isFinite(raw) ? raw : "";
+        const cbId = `${pickId}-${m.uid}`;
         return `
           <div class="participant-row">
-            <input type="checkbox" id="${pickId}-${m.uid}" data-uid="${esc(m.uid)}" ${sel ? "checked" : ""}>
-            <label for="${pickId}-${m.uid}">${esc(m.name)}</label>
+            <input type="checkbox" id="${esc(cbId)}" data-uid="${esc(m.uid)}" ${sel ? "checked" : ""}>
+            <label for="${esc(cbId)}">${esc(m.name)}</label>
             <input type="number" class="pct-input ${customPct ? "" : "hidden"}" data-pct="${esc(m.uid)}"
-              min="0" max="100" step="0.01" value="${pct}" placeholder="%">
+              min="0" max="100" step="0.01" value="${esc(pct)}" placeholder="%">
           </div>`;
       }).join("")}
     </div>
@@ -2008,17 +2101,17 @@ function wirePicker(pickId) {
   function refresh() {
     const custom = customToggle.checked;
     $(pickId).querySelectorAll(".pct-input").forEach(inp => {
-      const checked = $(`${pickId}-${inp.dataset.pct}`).checked;
+      const checked = $(`${pickId}-${inp.dataset.pct}`)?.checked;
       inp.classList.toggle("hidden", !custom || !checked);
     });
     sumEl.classList.toggle("hidden", !custom);
     if (custom) {
       const uids = selectedUids();
       // leere Felder gleichmäßig vorbelegen
-      const empty = uids.filter(u => !$(pickId).querySelector(`[data-pct="${u}"]`).value);
+      const empty = uids.filter(u => !$(pickId).querySelector(`[data-pct="${cssq(u)}"]`).value);
       if (empty.length === uids.length && uids.length) {
         const eq = equalPercents(uids);
-        uids.forEach(u => { $(pickId).querySelector(`[data-pct="${u}"]`).value = eq[u]; });
+        uids.forEach(u => { $(pickId).querySelector(`[data-pct="${cssq(u)}"]`).value = eq[u]; });
       }
       updateSum();
     }
@@ -2026,7 +2119,7 @@ function wirePicker(pickId) {
   function updateSum() {
     const uids = selectedUids();
     let sum = 0;
-    uids.forEach(u => { sum += parseFloat($(pickId).querySelector(`[data-pct="${u}"]`).value || "0"); });
+    uids.forEach(u => { sum += parseFloat($(pickId).querySelector(`[data-pct="${cssq(u)}"]`).value || "0"); });
     sum = Math.round(sum * 100) / 100;
     sumEl.textContent = `Summe: ${sum} %` + (Math.abs(sum - 100) < 0.01 ? " – passt" : " (muss 100 % sein)");
     sumEl.classList.toggle("ok", Math.abs(sum - 100) < 0.01);
@@ -2080,7 +2173,7 @@ function wirePicker(pickId) {
       const shares = {};
       let sum = 0;
       for (const u of uids) {
-        const v = parseFloat($(pickId).querySelector(`[data-pct="${u}"]`).value || "0");
+        const v = parseFloat($(pickId).querySelector(`[data-pct="${cssq(u)}"]`).value || "0");
         if (!(v >= 0)) { toast("Ungültiger Prozentwert."); return null; }
         shares[u] = Math.round(v * 100) / 100;
         sum += shares[u];
@@ -2228,7 +2321,7 @@ function openExpenseModal(expenseId) {
     <div class="stack">
       <div class="field">
         <label>Was wurde gekauft?</label>
-        <input type="text" id="exp-title" placeholder="z. B. Kaffeebohnen" value="${esc(existing?.title || "")}" ${canEdit ? "" : "disabled"}>
+        <input type="text" id="exp-title" maxlength="120" placeholder="z. B. Kaffeebohnen" value="${esc(existing?.title || "")}" ${canEdit ? "" : "disabled"}>
       </div>
       <div style="display:flex;gap:10px">
         <div class="field" style="flex:1">
@@ -2340,7 +2433,7 @@ function openPresetModal(presetId) {
     <div class="stack">
       <div class="field">
         <label>Name der Gruppe</label>
-        <input type="text" id="preset-name" placeholder='z. B. "Team Milch"' value="${esc(existing?.name || "")}">
+        <input type="text" id="preset-name" maxlength="60" placeholder='z. B. "Team Milch"' value="${esc(existing?.name || "")}">
       </div>
       <div class="field">
         <label>Wer gehört dazu?</label>
@@ -2390,12 +2483,14 @@ function openMemberModal(uid) {
   const bal = state.balances[uid] || 0;
   const inactive = m.active === false;
 
+  // Besitzer verwaltet alle; Admins nur einfache User (wie in den Regeln).
+  const manages = owner || (admin && m.role === "user");
   const canChangeRole = owner && !me && m.role !== "owner";
-  const canEditStart = admin && !me || owner;
-  const canRemove = (admin && !me && m.role !== "owner") || (owner && !me);
-  // Zahlungsdaten: jeder die eigenen; Admin/Besitzer auch die der
-  // anderen (Admins nicht die des Besitzers – so wollen es die Regeln).
-  const canEditPay = me || owner || (admin && m.role !== "owner");
+  const canEditStart = manages && (!me || owner);
+  const canRemove = manages && !me;
+  // Zahlungsdaten: jeder die eigenen; Besitzer/Admins die der von ihnen
+  // verwalteten Mitglieder – jede Änderung wird mit Name + Zeit vermerkt.
+  const canEditPay = me || manages;
 
   openModal(`
     <h3 class="modal-title">${esc(m.name)} ${me ? "(du)" : ""}</h3>
@@ -2404,29 +2499,29 @@ function openMemberModal(uid) {
         <div class="item-main"><div class="item-sub">Saldo</div>
           <div class="item-title ${bal > 0 ? "positive" : bal < 0 ? "negative" : ""}">${(bal > 0 ? "+" : "")}${formatCents(bal).replace("-", "−")}</div>
         </div>
-        <span class="badge ${ROLE_BADGE[m.role]}">${ROLE_LABEL[m.role]}</span>
+        <span class="badge ${ROLE_BADGE[m.role] || "badge-user"}">${ROLE_LABEL[m.role] || "User"}</span>
       </div>
       ${me ? `
       <div class="field">
         <label>Dein Anzeigename</label>
-        <input type="text" id="member-name" value="${esc(m.name)}">
+        <input type="text" id="member-name" maxlength="60" value="${esc(m.name)}">
       </div>` : ""}
       ${canEditPay ? `
       <p class="muted small" style="margin:4px 0 0">Zahlungsoptionen (optional) – damit
         ${me ? "dir andere" : `andere ${esc(m.name)}`} beim Ausgleich mit einem Klick zahlen können:</p>
       <div class="field">
         <label>PayPal.me-Name oder -Link</label>
-        <input type="text" id="member-paypal" placeholder="z. B. MaxMuster oder paypal.me/MaxMuster"
+        <input type="text" id="member-paypal" maxlength="80" placeholder="z. B. MaxMuster oder paypal.me/MaxMuster"
           value="${esc(m.paypal || "")}" autocapitalize="off" autocorrect="off">
       </div>
       <div class="field">
         <label>IBAN (für Überweisungs-QR-Code)</label>
-        <input type="text" id="member-iban" placeholder="DE12 3456 …"
+        <input type="text" id="member-iban" maxlength="42" placeholder="DE12 3456 …"
           value="${esc(formatIban(m.iban || ""))}" autocapitalize="characters" autocorrect="off">
       </div>
       <div class="field">
         <label>Kontoinhaber (falls anders als der Anzeigename)</label>
-        <input type="text" id="member-payname" placeholder="${esc(m.name)}" value="${esc(m.payName || "")}">
+        <input type="text" id="member-payname" maxlength="70" placeholder="${esc(m.name)}" value="${esc(m.payName || "")}">
       </div>` : ""}
       ${canChangeRole ? `
       <div class="field">
@@ -2441,7 +2536,7 @@ function openMemberModal(uid) {
         <label>Dabei seit (frühere Ausgaben betreffen dieses Mitglied nicht)</label>
         <input type="date" id="member-start" value="${esc(m.startDate || todayStr())}">
       </div>` : ""}
-      ${inactive && admin ? `<button class="btn btn-secondary" id="member-reactivate">Wieder aktivieren</button>` : ""}
+      ${inactive && manages ? `<button class="btn btn-secondary" id="member-reactivate">Wieder aktivieren</button>` : ""}
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" id="member-close">Schließen</button>
@@ -2467,6 +2562,10 @@ function openMemberModal(uid) {
       if (pp !== (m.paypal || "")) updates.paypal = pp;
       if (ib !== (m.iban || "")) updates.iban = ib;
       if (pn !== (m.payName || "")) updates.payName = pn;
+      if ("paypal" in updates || "iban" in updates || "payName" in updates) {
+        updates.payUpdatedBy = state.user.uid;
+        updates.payUpdatedAt = serverTimestamp();
+      }
     }
     if (me) {
       const name = $("member-name").value.trim();
@@ -2589,11 +2688,14 @@ $("btn-delete-team").addEventListener("click", async () => {
   const teamId = state.teamId;
   const base = doc(db, "teams", teamId);
   try {
-    for (const sub of ["expenses", "settlements", "presets", "members"]) {
+    for (const sub of ["expenses", "settlements", "presets", "reminders", "members"]) {
       const snap = await getDocs(collection(base, sub));
-      for (const d of snap.docs) await deleteDoc(d.ref);
+      // Den eigenen Besitzer-Eintrag erst ganz zum Schluss löschen –
+      // bis dahin braucht es ihn als Berechtigung.
+      for (const d of snap.docs) if (!(sub === "members" && d.id === state.user.uid)) await deleteDoc(d.ref);
     }
     await deleteDoc(base);
+    await deleteDoc(doc(db, "teams", teamId, "members", state.user.uid));
     await updateDoc(doc(db, "users", state.user.uid), { teams: arrayRemove(teamId) });
     toast("Team gelöscht.");
   } catch (err) {
@@ -2654,7 +2756,7 @@ $("btn-profile").addEventListener("click", () => {
     <div class="stack">
       <div class="field">
         <label>Dein Name (wird im Team angezeigt)</label>
-        <input type="text" id="profile-name" value="${esc(state.profile?.name || "")}">
+        <input type="text" id="profile-name" maxlength="60" value="${esc(state.profile?.name || "")}">
       </div>
       <div class="field">
         <label>E-Mail</label>
@@ -2680,7 +2782,7 @@ $("btn-profile").addEventListener("click", () => {
     closeModal();
     toast("Name gespeichert.");
   });
-  $("profile-signout").addEventListener("click", () => { closeModal(); signOut(auth); });
+  $("profile-signout").addEventListener("click", () => { closeModal(); signOutAndClear(); });
 });
 
 // ---------------------------------------------------------

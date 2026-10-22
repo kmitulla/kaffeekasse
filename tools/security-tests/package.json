@@ -1,0 +1,14 @@
+{
+  "name": "kaffeekasse-security-tests",
+  "private": true,
+  "description": "Angriffs- und Kompatibilitätstests für firestore.rules im Firebase-Emulator. Nur für Entwickler, wird NICHT ausgeliefert.",
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-kk \"node rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase": "12.19.0",
+    "firebase-tools": "15.32.1"
+  }
+}

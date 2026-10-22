@@ -122,17 +122,17 @@ veröffentlichen.
 
 1. **Registrieren** (Name, E-Mail, Passwort). Man bleibt angemeldet.
    Danach muss der Master das Konto einmalig **freischalten**.
-2. Der **Master** erstellt ein **Team** – er ist automatisch **Benutzer** (Inhaber, alle Rechte).
+2. Der **Master** erstellt ein **Team** – er ist automatisch **Besitzer** (alle Rechte).
 3. Auf dem Tab **Team** steht der **Einladungscode** – den an die Kollegen schicken.
 4. Kollegen registrieren sich und treten mit dem Code bei (Rolle: **User**).
-5. Der Inhaber kann Mitglieder zum **Admin** machen (Tab Team → Mitglied antippen).
+5. Der Besitzer kann Mitglieder zum **Admin** machen (Tab Team → Mitglied antippen).
 
 ### Rollen
 
 | Rolle | Rechte |
 |---|---|
-| **Benutzer** (Inhaber) | Alles: Team löschen, Rollen vergeben, plus alle Admin-Rechte |
-| **Admin** | Mitglieder verwalten & entfernen (mit Verrechnung), Gruppen/Presets, alle Ausgaben bearbeiten |
+| **Besitzer** | Alles: Team löschen, Rollen vergeben, Admins verwalten, plus alle Admin-Rechte |
+| **Admin** | Einfache User verwalten & entfernen (mit Verrechnung), Gruppen/Presets, alle Ausgaben und Zahlungen bearbeiten |
 | **User** | Eigene Ausgaben eintragen/ändern/löschen, Zahlungen melden & bestätigen |
 
 ### Ausgaben & Ausgleich
@@ -157,9 +157,50 @@ Sobald wieder Internet da ist, wird alles automatisch abgeglichen.
 
 ---
 
+## 🔒 Sicherheit
+
+Die App hat **keinen eigenen Server** – kein PHP, kein Node.js-Backend. Sie
+besteht nur aus statischen Dateien auf GitHub Pages; Daten liegen in Firebase.
+Server-Lücken wie „PHP2Shell“ (CVE-2026-109618/-109619) betreffen sie deshalb
+nicht. Die eigentliche Schutzschicht sind die **Firestore-Regeln**.
+
+Was geschützt ist (Stand Oktober 2026, mit automatisierten Angriffstests geprüft):
+
+- **Regeln prüfen jedes Feld** (Typ, Länge, Format). Negative Beträge, falsche
+  Datentypen, Schadcode in Datumsfeldern, Rechteausweitung (Admin → Besitzer),
+  Wiederbeitritt nach Entfernen, gefälschte Master-Anmeldung u. v. m. werden
+  vom Server abgelehnt.
+- **Zahlungsdaten-Spur:** Wer IBAN/PayPal einer anderen Person ändert, wird
+  mit Name und Zeit gespeichert – Zahlende sehen dann eine Warnung.
+- **Strikte Content-Security-Policy:** Im Browser darf nur der eigene Code
+  laufen; eingeschleuster Schadcode wird blockiert. Zusätzlich wird jede
+  Anzeige von Daten konsequent maskiert (Schutz vor XSS).
+- **Firebase-SDK lokal gebündelt** in einer fest gepinnten, abgehangenen
+  Version (`js/vendor/firebase.js`) – nichts wird zur Laufzeit von fremden
+  Servern nachgeladen (Schutz vor Lieferketten-Angriffen).
+- **Abmelden löscht** die lokal gespeicherten Team-Daten vom Gerät.
+- Kein Einbetten in fremde Seiten (Clickjacking-Schutz), keine geheimen
+  Einmal-Codes im Browser-Verlauf oder Offline-Cache.
+- Neue Passwörter: mindestens 8 Zeichen.
+
+**Empfohlene Einstellungen in der Firebase Console** (je ein Klick):
+
+1. **Authentication → Einstellungen → Passwortrichtlinie:** Mindestlänge
+   **8** (oder mehr) aktivieren und „Erzwingen“ wählen.
+2. **Authentication → Einstellungen → Nutzerkontoverknüpfung / Schutz vor
+   E-Mail-Aufzählung:** aktiviert lassen (Standard).
+3. **Nur E-Mail/Passwort** als Anmeldeweg aktiviert lassen.
+4. GitHub: **Zwei-Faktor-Anmeldung** für dein Konto aktivieren – wer das
+   Repository ändern kann, kann die App ändern.
+
+Wichtig: Nach jeder Änderung an `firestore.rules` muss der komplette Inhalt
+wieder in der Firebase Console unter **Firestore Database → Regeln**
+eingefügt und veröffentlicht werden.
+
 ## 🛠 Technik
 
-- Reines HTML/CSS/JavaScript – kein Build-Schritt, läuft direkt auf GitHub Pages
+- Reines HTML/CSS/JavaScript – kein Build-Schritt nötig, läuft direkt auf GitHub Pages
 - Firebase Authentication (E-Mail/Passwort) & Cloud Firestore (mit Offline-Cache)
+- Firebase-SDK lokal in `js/vendor/firebase.js` (Neubau nur bei Updates, siehe `tools/firebase-bundle/README.md`)
 - PWA: Service Worker, Web-App-Manifest, App-Icon
 - Beträge werden intern in Cent gerechnet (keine Rundungsfehler)
