@@ -34,15 +34,33 @@ export const db = initializeFirestore(app, {
 // vom Gerät löschen – wichtig auf geteilten PCs/Handys.
 export async function signOutAndClear() {
   try { await signOut(auth); } catch { /* trotzdem aufräumen */ }
+  try { await terminate(db); } catch { /* weiter */ }
   try {
-    await terminate(db);
     await clearIndexedDbPersistence(db);
   } catch (err) {
-    // z. B. wenn die App noch in einem anderen Tab offen ist
-    console.warn("Lokaler Cache konnte nicht vollständig gelöscht werden:", err);
+    // Firebase verweigert das Löschen, solange eine frühere Instanz der
+    // Seite noch als aktiv gilt – dann die lokale Datenbank direkt löschen.
+    console.warn("Cache-Löschen über Firebase nicht möglich, lösche direkt:", err?.code || err);
+    await deleteFirestoreDatabases();
   }
   try { localStorage.removeItem("kk-team"); } catch { /* egal */ }
   location.replace(location.pathname);
+}
+
+async function deleteFirestoreDatabases() {
+  let names = [];
+  try {
+    names = (await indexedDB.databases()).map(d => d.name).filter(n => n && n.startsWith("firestore/"));
+  } catch {
+    names = [`firestore/[DEFAULT]/${firebaseConfig.projectId}/main`];
+  }
+  await Promise.all(names.map(name => new Promise((resolve) => {
+    const req = indexedDB.deleteDatabase(name);
+    req.onsuccess = req.onerror = () => resolve();
+    // Ist die App noch in einem anderen Tab offen, wird gelöscht, sobald
+    // dieser geschlossen wird – nicht ewig darauf warten.
+    req.onblocked = () => setTimeout(resolve, 1500);
+  })));
 }
 
 // Legt ein Konto über eine zweite, getrennte Firebase-Instanz an,

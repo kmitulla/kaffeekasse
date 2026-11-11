@@ -363,9 +363,9 @@ $("auth-forgot").addEventListener("click", async (e) => {
   }
 });
 
-$("noteam-signout").addEventListener("click", () => signOutAndClear());
+$("noteam-signout").addEventListener("click", () => doSignOut());
 $("noteam-back").addEventListener("click", () => showView("app"));
-$("pending-signout").addEventListener("click", () => signOutAndClear());
+$("pending-signout").addEventListener("click", () => doSignOut());
 
 // ---------------------------------------------------------
 // Master: Konten freischalten
@@ -864,9 +864,23 @@ if (resetOobCode) initResetFlow();
 // ---------------------------------------------------------
 // Start: Auth-Status beobachten
 // ---------------------------------------------------------
+// Abmelden: bis die lokalen Daten gelöscht sind und die Seite neu lädt,
+// den Ladebildschirm zeigen (sonst wäre kurz die Anmeldung zu sehen und
+// eine begonnene Eingabe ginge beim Neuladen verloren).
+function doSignOut() {
+  state.signingOut = true;
+  showView("loading");
+  // Alle Daten-Abos beenden, bevor die Datenbank heruntergefahren wird
+  cleanupTeam();
+  for (const key of ["profileUnsub", "usersUnsub", "pwResetsUnsub"]) {
+    if (state[key]) { state[key](); state[key] = null; }
+  }
+  signOutAndClear();
+}
+
 onAuthStateChanged(auth, async (user) => {
-  // Während des Passwort-Zurücksetzens keine Ansicht wechseln
-  if (state.resetMode) return;
+  // Während des Passwort-Zurücksetzens oder Abmeldens keine Ansicht wechseln
+  if (state.resetMode || state.signingOut) return;
   cleanupTeam();
   if (state.profileUnsub) { state.profileUnsub(); state.profileUnsub = null; }
   if (state.usersUnsub) { state.usersUnsub(); state.usersUnsub = null; }
@@ -2782,7 +2796,7 @@ $("btn-profile").addEventListener("click", () => {
     closeModal();
     toast("Name gespeichert.");
   });
-  $("profile-signout").addEventListener("click", () => { closeModal(); signOutAndClear(); });
+  $("profile-signout").addEventListener("click", () => { closeModal(); doSignOut(); });
 });
 
 // ---------------------------------------------------------
